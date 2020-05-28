@@ -11,9 +11,19 @@ namespace Quaver.Steam.Deploy.Configuration
         public string QuaverProjectDirectory { get; set; } = "";
 
         /// <summary>
+        ///     The directory of the Steam Content Builder
+        /// </summary>
+        public string ContentBuilderDirectory { get; set; } = "";
+
+        /// <summary>
         ///     Whether or not the tool should zip up the builds
         /// </summary>
         public bool ZipBuilds { get; set; }
+
+        /// <summary>
+        ///     Whether or not the script will deploy the builds to Steam
+        /// </summary>
+        public bool DeployToSteam { get; set; }
 
         /// <summary>
         ///     The path of the config file.

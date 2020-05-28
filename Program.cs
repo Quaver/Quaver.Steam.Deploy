@@ -27,6 +27,16 @@ namespace Quaver.Steam.Deploy
         private static Config Configuration { get; set; }
 
         /// <summary>
+        ///     The platforms the game is being built to
+        /// </summary>
+        private static string[] Platforms { get; } = 
+        {
+            "win-x64",
+            "linux-x64",
+            "osx-x64"
+        };
+
+        /// <summary>
         /// </summary>
         /// <param name="args"></param>
         internal static void Main(string[] args)
@@ -70,20 +80,17 @@ namespace Quaver.Steam.Deploy
         /// </summary>
         private static void CompileClients()
         {
-            var platforms = new[]
-            {
-                "win-x64",
-                "linux-x64",
-                "osx-x64"
-            };
-
-            foreach (var platform in platforms)
+            foreach (var platform in Platforms)
             {
                 var ver = $"'{Version}' for {platform}";
 
                 Console.WriteLine($"Compiling Quaver version {ver}...");
 
-                var dir = $"{OutputDir}/{platform}";
+                var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
+                
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, true);
+                
                 Directory.CreateDirectory(dir);
 
                 var cmd = $"publish {Configuration.QuaverProjectDirectory} -r {platform} -c Public -o {dir}";
