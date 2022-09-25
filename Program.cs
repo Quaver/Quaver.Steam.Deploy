@@ -93,7 +93,8 @@ namespace Quaver.Steam.Deploy
                 
                 Directory.CreateDirectory(dir);
 
-                var cmd = $"publish {Configuration.QuaverProjectDirectory} -r {platform} -c Public -o {dir}";
+                var cmd = $"publish {Configuration.QuaverProjectDirectory} -f net6.0 -r {platform} -c Public -o {dir} --self-contained true";
+
                 RunCommand("dotnet", cmd, false);
 
                 Console.WriteLine($"Finished compiling Quaver version {ver}!");
