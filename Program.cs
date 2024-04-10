@@ -185,10 +185,6 @@ namespace Quaver.Steam.Deploy
                 Console.WriteLine($"Platform: {Version} {platform}");
                 
                 var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
-                
-                // string[] dllFiles = Directory.GetFiles(dir, "*.dll")
-                //     .Where(file => DllFiles.Contains(Path.GetFileName(file)))
-                //     .ToArray();
 
                 var hashes = new List<string>();
                 
