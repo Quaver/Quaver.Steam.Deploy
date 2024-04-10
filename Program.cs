@@ -1,7 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
+using System.Security.Cryptography;
 using Quaver.Steam.Deploy.Configuration;
 using SharpCompress.Archives;
 using SharpCompress.Archives.Zip;
@@ -36,6 +37,15 @@ namespace Quaver.Steam.Deploy
             "osx-x64"
         };
 
+        private static string[] DllFiles { get; } =
+        {
+            "Quaver.API.dll",
+            "Quaver.Server.Client.dll",
+            "Quaver.Server.Common.dll",
+            "Quaver.Shared.dll",
+            "Quaver.dll",
+        };
+
         /// <summary>
         /// </summary>
         /// <param name="args"></param>
@@ -45,7 +55,16 @@ namespace Quaver.Steam.Deploy
             DeleteExistingBuild();
             
             Version = GetVersion();
+            
+            // Reset sql file
+            File.WriteAllText($"{Directory.GetCurrentDirectory()}/sql.sql", $"");
+
             CompileClients();
+            MD5Hashes();
+            
+            // Avoid closing console
+            Console.WriteLine("Press any key to close");
+            Console.ReadLine();
         }
 
         /// <summary>
@@ -84,7 +103,7 @@ namespace Quaver.Steam.Deploy
             {
                 var ver = $"'{Version}' for {platform}";
 
-                Console.WriteLine($"Compiling Quaver version {ver}...");
+                Console.WriteLine($"Compiling Quaver...");
 
                 var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
                 
@@ -93,11 +112,11 @@ namespace Quaver.Steam.Deploy
                 
                 Directory.CreateDirectory(dir);
 
-                var cmd = $"publish {Configuration.QuaverProjectDirectory} -f net6.0 -r {platform} -c Release -o {dir} --self-contained true";
+                var cmd = $"publish {Configuration.QuaverProjectDirectory} -f net6.0 -r {platform} -c Public -o {dir} --self-contained true";
 
                 RunCommand("dotnet", cmd, false);
 
-                Console.WriteLine($"Finished compiling Quaver version {ver}!");
+                Console.WriteLine($"Finished compiling Quaver!");
 
                 if (!Configuration.ZipBuilds) 
                     continue;
@@ -154,6 +173,50 @@ namespace Quaver.Steam.Deploy
 
             Console.WriteLine(output);
             return false;
+        }
+
+        /// <summary>
+        ///     Print out hashes for each platform
+        /// </summary>
+        private static void MD5Hashes()
+        {
+            foreach (var platform in Platforms)
+            {
+                Console.WriteLine($"Platform: {Version} {platform}");
+                
+                var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
+                
+                // string[] dllFiles = Directory.GetFiles(dir, "*.dll")
+                //     .Where(file => DllFiles.Contains(Path.GetFileName(file)))
+                //     .ToArray();
+
+                var hashes = new List<string>();
+                
+                foreach (string dllFile in DllFiles)
+                {
+                    using (var md5 = MD5.Create())
+                    {
+                        using (var stream = File.OpenRead($"{dir}/{dllFile}"))
+                        {
+                            byte[] hash = md5.ComputeHash(stream);
+                            string hashString = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+                            Console.WriteLine($"{Path.GetFileName(dllFile)}: {hashString}");
+                            hashes.Add(hashString);
+                        }
+                    }
+                }
+                
+                HashesToSql(Version, platform, hashes[0], hashes[1], hashes[3], hashes[4]);
+            }
+        }
+
+        private static void HashesToSql(string version, string platform, string quaverAPI, string quaverServerClient, string quaverServerCommon, string quaverShared)
+        {
+            File.AppendAllText($"{Directory.GetCurrentDirectory()}/sql.sql",
+                $"INSERT INTO `game_builds` " +
+                $"(`version`, `quaver_dll`, `quaver_api_dll`, `quaver_server_client_dll`, `quaver_server_common_dll`, `quaver_shared_dll`, `allowed`, `timestamp`)\n" +
+                $" VALUES " +
+                $"('{version} {platform}', 'NONE', '{quaverAPI}', '{quaverServerClient}', '{quaverServerCommon}', '{quaverShared}', 1, {DateTimeOffset.UtcNow.ToUnixTimeSeconds()})\n");
         }
     }
 }
