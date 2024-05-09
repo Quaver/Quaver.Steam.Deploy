@@ -112,7 +112,7 @@ namespace Quaver.Steam.Deploy
                 
                 Directory.CreateDirectory(dir);
 
-                var cmd = $"publish {Configuration.QuaverProjectDirectory} -f net6.0 -r {platform} -c Public -o {dir} --self-contained true";
+                var cmd = $"publish {Configuration.QuaverProjectDirectory} -f net6.0 -r {platform} -c Public -o {dir} -define PUBLIC --self-contained true";
 
                 RunCommand("dotnet", cmd, false);
 
