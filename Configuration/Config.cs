@@ -6,25 +6,30 @@ namespace Quaver.Steam.Deploy.Configuration
     public class Config
     {
         /// <summary>
-        ///     The directory of where Quaver is housed.
+        ///     SSH URL of the repository
         /// </summary>
-        public string QuaverProjectDirectory { get; set; } = "";
-
+        public string Repository { get; set; } = "git@github.com:Quaver/Quaver.git";
+        
         /// <summary>
-        ///     The directory of the Steam Content Builder
+        ///     .NET Framework
         /// </summary>
-        public string ContentBuilderDirectory { get; set; } = "";
-
+        public string NetFramework { get; set; } = "net6.0";
+        
         /// <summary>
-        ///     Whether or not the tool should zip up the builds
+        ///     Path to .NET Reactor runnable
         /// </summary>
-        public bool ZipBuilds { get; set; }
-
+        public string NetReactor { get; set; } = "";
+        
+        /// <summary>
+        ///     Quaver API Key
+        /// </summary>
+        public string QuaverAPIKey { get; set; } = "";
+        
         /// <summary>
         ///     Whether or not the script will deploy the builds to Steam
         /// </summary>
         public bool DeployToSteam { get; set; }
-
+        
         /// <summary>
         ///     The path of the config file.
         /// </summary>

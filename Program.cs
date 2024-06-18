@@ -2,35 +2,31 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Security.Cryptography;
+using System.Threading.Tasks;
 using Quaver.Steam.Deploy.Configuration;
-using SharpCompress.Archives;
-using SharpCompress.Archives.Zip;
-using SharpCompress.Common;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Xml.Linq;
 
 namespace Quaver.Steam.Deploy
 {
     internal static class Program
     {
-        /// <summary>
-        ///     The output directory of the build
-        /// </summary>
-        private static string OutputDir => Directory.GetCurrentDirectory() + "/build";
+        private static readonly string CurrentDirectory = Directory.GetCurrentDirectory();
 
-        /// <summary>
-        ///     The version of the client that's being built
-        /// </summary>
+        private static string CompiledBuildPath => CurrentDirectory + "\\build";
+
+        private static string SourceCodePath => CurrentDirectory + "\\quaver";
+
+        private static string SteamCMDPath => CurrentDirectory + "\\steamcmd";
+
         private static string Version { get; set; }
 
-        /// <summary>
-        ///     Config setup for the deploy script to use
-        /// </summary>
+        private static string RepoBranch { get; set; }
+
         private static Config Configuration { get; set; }
 
-        /// <summary>
-        ///     The platforms the game is being built to
-        /// </summary>
-        private static string[] Platforms { get; } = 
+        private static string[] Platforms { get; } =
         {
             "win-x64",
             "linux-x64",
@@ -43,149 +39,128 @@ namespace Quaver.Steam.Deploy
             "Quaver.Server.Client.dll",
             "Quaver.Server.Common.dll",
             "Quaver.Shared.dll",
-            "Quaver.dll",
         };
 
         /// <summary>
         /// </summary>
         /// <param name="args"></param>
-        internal static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             Configuration = Config.Deserialize();
-            DeleteExistingBuild();
-            
-            Version = GetVersion();
-            
-            // Reset sql file
-            File.WriteAllText($"{Directory.GetCurrentDirectory()}/sql.sql", $"");
+            // ToDo SteamCmd download
+            await CleanUp();
+            await GameVersion();
+            await Branch();
+            await CloneProject();
+            await BuildProject();
+            await EncryptClient();
+            await HashProject();
+            await SubmitHashes();
+            await Deploy();
 
-            CompileClients();
-            MD5Hashes();
-            
             // Avoid closing console
             Console.WriteLine("Press any key to close");
             Console.ReadLine();
         }
 
-        /// <summary>
-        ///     Deletes the output folder if it exists to start fresh.
-        /// </summary>
-        private static void DeleteExistingBuild()
+        private static async Task CleanUp()
         {
-            if (Directory.Exists(OutputDir))
-                Directory.Delete(OutputDir, true);
-
-            Directory.CreateDirectory(OutputDir);
+            // Delete cloned project
+            // await DeleteAndCreate(SourceCodePath);
+            // Delete builds
+            await DeleteAndCreate(CompiledBuildPath);
         }
-        
-        /// <summary>
-        ///     Asks the user for a version number of the client
-        /// </summary>
-        /// <returns></returns>
-        private static string GetVersion()
+
+        private static async Task DeleteAndCreate(string path)
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, true);
+
+            if (path != null) Directory.CreateDirectory(path);
+        }
+
+        private static async Task GameVersion()
         {
             Console.Write("Enter a version number for the client: ");
 
-            string version = null;
-
-            while (string.IsNullOrEmpty(version))
-                version = Console.ReadLine();
-
-            return version;
+            while (string.IsNullOrEmpty(Version))
+                Version = Console.ReadLine();
         }
 
-        /// <summary>
-        ///     Compiles the client for each platform
-        /// </summary>
-        private static void CompileClients()
+        private static async Task Branch()
         {
+            Console.Write("Enter which branch we are building: ");
+
+            while (string.IsNullOrEmpty(RepoBranch))
+                RepoBranch = Console.ReadLine();
+        }
+
+        private static async Task CloneProject()
+        {
+            var scriptContent =
+                $"git clone --recurse-submodules -b {RepoBranch} --single-branch {Configuration.Repository} {SourceCodePath}";
+
+            Console.WriteLine("Please clone the project");
+            Console.WriteLine(scriptContent);
+            Console.WriteLine("Press enter when it finished to continue!");
+            Console.ReadLine();
+        }
+
+        private static async Task BuildProject()
+        {
+            // Update project version
+            // Temporary fix until we ship Monogame dll instead submodule
+            UpdateProjectVersion($"{SourceCodePath}/Quaver/Quaver.csproj", Version);
+
             foreach (var platform in Platforms)
             {
-                var ver = $"'{Version}' for {platform}";
+                var version = $"'{Version}' for {platform}";
+                var dir = $"{CompiledBuildPath}/content-{platform}";
 
-                Console.WriteLine($"Compiling Quaver...");
+                RunCommand("dotnet",
+                    $"publish {SourceCodePath} -f {Configuration.NetFramework} -r {platform} -c Public -o {dir} --self-contained",
+                    false);
 
-                var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
-                
-                if (Directory.Exists(dir))
-                    Directory.Delete(dir, true);
-                
-                Directory.CreateDirectory(dir);
-
-                var cmd = $"publish {Configuration.QuaverProjectDirectory} -f net6.0 -r {platform} -c Public -o {dir} --self-contained true";
-
-                RunCommand("dotnet", cmd, false);
-
-                Console.WriteLine($"Finished compiling Quaver!");
-
-                if (!Configuration.ZipBuilds) 
-                    continue;
-                
-                Console.WriteLine($"Archiving Quaver version {ver} to a zip file...");
-
-                // For debug/offline builds on Steam. Needs a Spacewar file
-                File.WriteAllText($"{dir}/steam_appid.txt", "480");
-                
-                using (var archive = ZipArchive.Create())
-                {
-                    archive.AddAllFromDirectory(dir);
-                    archive.SaveTo($"{Directory.GetCurrentDirectory()}/quaver-{Version}-{platform}.zip", CompressionType.Deflate);
-                }
-                
-                Console.WriteLine($"Finished archiving Quaver version {ver} to a zip file!");
+                Console.WriteLine($"Finished compiling {version}!");
             }
-            
+
             Console.WriteLine("Successfully finished compiling all Quaver versions!");
         }
-        
-        /// <summary>
-        ///     Runs a CLI command
-        /// </summary>
-        /// <param name="command"></param>
-        /// <param name="args"></param>
-        /// <returns></returns>
-        private static bool RunCommand(string command, string args, bool showOutput = true)
+
+        private static async Task EncryptClient()
         {
-            var psi = new ProcessStartInfo(command, args)
+            Console.WriteLine("Starting encrypting client");
+            // ToDo Run Reactor & move encrypted dlls to all platforms
+            // Run .NET Reactor for win-x64
+            string contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
+
+            string commandline =
+                $"-licensed -file {contentPath}\\Quaver.dll -files {contentPath}\\Quaver.Server.Client.dll;{contentPath}\\Quaver.Server.Common.dll -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
+
+            RunCommand(Configuration.NetReactor, commandline);
+
+            string quaverServerClient = $"{contentPath}\\Quaver.Server.Client_Secure\\Quaver.Server.Client.dll";
+            string quaverServerCommon = $"{contentPath}\\Quaver.Server.Common_Secure\\Quaver.Server.Common.dll";
+
+            foreach (var platform in Platforms)
             {
-                WorkingDirectory = Environment.CurrentDirectory,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-
-            var p = Process.Start(psi);
+                string path = $"{CompiledBuildPath}\\content-{platform}";
+                File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
+                File.Copy(quaverServerCommon, $"{path}\\Quaver.Server.Common.dll", true);
+            }
             
-            if (p == null) 
-                return false;
-
-            var output = "";
-            
-            output += p.StandardOutput.ReadToEnd();
-            output += p.StandardError.ReadToEnd();
-
-            p.WaitForExit();
-
-            if (p.ExitCode == 0) 
-                return true;
-
-            Console.WriteLine(output);
-            return false;
+            // ToDo webhook upload mapping files to ac2 or to db
+            Console.WriteLine("Finished encrypting");
         }
 
-        /// <summary>
-        ///     Print out hashes for each platform
-        /// </summary>
-        private static void MD5Hashes()
+        private static async Task HashProject()
         {
             foreach (var platform in Platforms)
             {
                 Console.WriteLine($"Platform: {Version} {platform}");
                 
-                var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
-
+                var dir = $"{CompiledBuildPath}/content-{platform}";
+            
                 var hashes = new List<string>();
                 
                 foreach (string dllFile in DllFiles)
@@ -201,18 +176,160 @@ namespace Quaver.Steam.Deploy
                         }
                     }
                 }
-                
-                HashesToSql(Version, platform, hashes[0], hashes[1], hashes[3], hashes[4]);
             }
         }
 
-        private static void HashesToSql(string version, string platform, string quaverAPI, string quaverServerClient, string quaverServerCommon, string quaverShared)
+        private static async Task SubmitHashes()
         {
-            File.AppendAllText($"{Directory.GetCurrentDirectory()}/sql.sql",
-                $"INSERT INTO `game_builds` " +
-                $"(`version`, `quaver_dll`, `quaver_api_dll`, `quaver_server_client_dll`, `quaver_server_common_dll`, `quaver_shared_dll`, `allowed`, `timestamp`)\n" +
-                $" VALUES " +
-                $"('{version} {platform}', 'NONE', '{quaverAPI}', '{quaverServerClient}', '{quaverServerCommon}', '{quaverShared}', 1, {DateTimeOffset.UtcNow.ToUnixTimeSeconds()})\n");
+            // ToDo
+            Console.WriteLine("Submitting hashes to Quaver's database WIP");
         }
+
+        private static async Task Deploy()
+        {
+            // ToDo
+            // Delete the reactor folders
+            string contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
+            Directory.Delete($"{contentPath}/Quaver_Secure", true);
+            Directory.Delete($"{contentPath}/Quaver.Server.Client_Secure", true);
+            Directory.Delete($"{contentPath}/Quaver.Server.Common_Secure", true);
+            
+            Console.WriteLine("Deploying to Steam... (not yet lol)");
+        }
+
+        private static bool RunCommand(string command, string args, bool showOutput = true)
+        {
+            var psi = new ProcessStartInfo(command, args)
+            {
+                WorkingDirectory = Environment.CurrentDirectory,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            var p = Process.Start(psi);
+
+            if (p == null)
+                return false;
+
+            var output = "";
+
+            output += p.StandardOutput.ReadToEnd();
+            output += p.StandardError.ReadToEnd();
+
+            p.WaitForExit();
+
+            if (p.ExitCode == 0)
+                return true;
+
+            if (showOutput)
+                Console.WriteLine(output);
+
+            return false;
+        }
+
+        private static void UpdateProjectVersion(string projectFilePath, string newVersion)
+        {
+            try
+            {
+                // Load the project file
+                XDocument projFile = XDocument.Load(projectFilePath);
+
+                // Find the <Version> element and update its value
+                XElement versionElement = projFile.Descendants()
+                    .FirstOrDefault(d => d.Name.LocalName == "Version");
+
+                if (versionElement != null)
+                {
+                    versionElement.Value = newVersion;
+                }
+                else
+                {
+                    // If <Version> element doesn't exist, create it under the <PropertyGroup> node
+                    XElement propertyGroup = projFile.Descendants()
+                        .FirstOrDefault(d => d.Name.LocalName == "PropertyGroup");
+
+                    if (propertyGroup != null)
+                    {
+                        propertyGroup.Add(new XElement("Version", newVersion));
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("No <PropertyGroup> found in the .csproj file.");
+                    }
+                }
+
+                // Save the modified project file
+                projFile.Save(projectFilePath);
+                Console.WriteLine($"Version updated successfully to {newVersion} in {projectFilePath}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error updating version: {ex.Message}");
+            }
+        }
+
+        // /// <summary>
+        // ///     Print out hashes for each platform
+        // /// </summary>
+        // private static void MD5Hashes()
+        // {
+        //     foreach (var platform in Platforms)
+        //     {
+        //         Console.WriteLine($"Platform: {Version} {platform}");
+        //         
+        //         var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
+        //
+        //         var hashes = new List<string>();
+        //         
+        //         foreach (string dllFile in DllFiles)
+        //         {
+        //             using (var md5 = MD5.Create())
+        //             {
+        //                 using (var stream = File.OpenRead($"{dir}/{dllFile}"))
+        //                 {
+        //                     byte[] hash = md5.ComputeHash(stream);
+        //                     string hashString = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        //                     Console.WriteLine($"{Path.GetFileName(dllFile)}: {hashString}");
+        //                     hashes.Add(hashString);
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+        //
+        // private static async Task DetectSteamCMD()
+        // {
+        //     var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
+        //     var steamCMDPath = "./steamcmd";
+        //     var steamCMDName = "steamcmd.zip";
+        //
+        //     if (!Directory.Exists(steamCMDPath))
+        //     {
+        //         await DownloadFileAsync(steamCMDUrl, steamCMDName);
+        //         ZipFile.ExtractToDirectory($"./{steamCMDName}", steamCMDPath);
+        //     }
+        //
+        //     if (File.Exists($"./{steamCMDName}"))
+        //     {
+        //         File.Delete($"./{steamCMDName}");
+        //     }
+        // }
+        //
+        // static async Task DownloadFileAsync(string url, string fileName)
+        // {
+        //     using (HttpClient client = new HttpClient())
+        //     {
+        //         HttpResponseMessage response = await client.GetAsync(url);
+        //         response.EnsureSuccessStatusCode();
+        //
+        //         using (FileStream fs = new FileStream($"./{fileName}", FileMode.Create, FileAccess.Write, FileShare.None))
+        //         {
+        //             await response.Content.CopyToAsync(fs);
+        //         }
+        //     }
+        // }
     }
 }
