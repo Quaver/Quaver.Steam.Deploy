@@ -271,35 +271,6 @@ namespace Quaver.Steam.Deploy
             }
         }
 
-        // /// <summary>
-        // ///     Print out hashes for each platform
-        // /// </summary>
-        // private static void MD5Hashes()
-        // {
-        //     foreach (var platform in Platforms)
-        //     {
-        //         Console.WriteLine($"Platform: {Version} {platform}");
-        //         
-        //         var dir = Configuration.DeployToSteam ? $"{Configuration.ContentBuilderDirectory}/content-{platform}" : $"{OutputDir}/{platform}";
-        //
-        //         var hashes = new List<string>();
-        //         
-        //         foreach (string dllFile in DllFiles)
-        //         {
-        //             using (var md5 = MD5.Create())
-        //             {
-        //                 using (var stream = File.OpenRead($"{dir}/{dllFile}"))
-        //                 {
-        //                     byte[] hash = md5.ComputeHash(stream);
-        //                     string hashString = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
-        //                     Console.WriteLine($"{Path.GetFileName(dllFile)}: {hashString}");
-        //                     hashes.Add(hashString);
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-        //
         // private static async Task DetectSteamCMD()
         // {
         //     var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
