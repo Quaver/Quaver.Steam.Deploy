@@ -216,7 +216,7 @@ namespace Quaver.Steam.Deploy
             var code = Console.ReadLine();
             
             // Delete the reactor folders
-            string contentPath = $"{CompiledBuildPath}\\content-content-win-x64";
+            string contentPath = $"{CompiledBuildPath}\\content-win-x64";
             Directory.Delete($"{contentPath}\\Quaver_Secure", true);
             Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
             Directory.Delete($"{contentPath}\\Quaver.Server.Common_Secure", true);
