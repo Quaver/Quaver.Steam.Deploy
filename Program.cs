@@ -56,7 +56,7 @@ namespace Quaver.Steam.Deploy
             Branch();
             CloneProject();
             BuildProject();
-            EncryptClient();
+            ObfuscateClient();
             HashProject();
             SubmitHashes();
             Deploy();
@@ -131,9 +131,15 @@ namespace Quaver.Steam.Deploy
             Console.WriteLine("Successfully finished compiling for all platforms!");
         }
 
-        private static void EncryptClient()
+        private static void ObfuscateClient()
         {
-            Console.WriteLine("Starting encrypting client");
+            if (!Configuration.RunReactor)
+            {                
+                Console.WriteLine("Obfuscating client is disabled in the config file. Skipping...");
+                return;
+            }
+            
+            Console.WriteLine("Starting obfuscating client");
             // Run .NET Reactor for win-x64
             var contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
 
@@ -153,7 +159,7 @@ namespace Quaver.Steam.Deploy
             }
             
             // ToDo webhook upload mapping files to ac2 or to db
-            Console.WriteLine("Finished encrypting");
+            Console.WriteLine("Finished obfuscating");
         }
 
         private static void HashProject()

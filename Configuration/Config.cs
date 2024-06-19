@@ -42,6 +42,11 @@ namespace Quaver.Steam.Deploy.Configuration
         public bool DeployToSteam { get; set; }
         
         /// <summary>
+        ///     Run .NET Reactor
+        /// </summary>
+        public bool RunReactor { get; set; }
+        
+        /// <summary>
         ///     The path of the config file.
         /// </summary>
         public static string Path => $"{Directory.GetCurrentDirectory()}/config.json";
