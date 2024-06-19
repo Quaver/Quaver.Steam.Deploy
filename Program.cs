@@ -72,7 +72,17 @@ namespace Quaver.Steam.Deploy
         private static void DeleteAndCreate(string path)
         {
             if (Directory.Exists(path))
+            {
+                // This resolves not allowing us to delete git folder
+                var directory = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
+
+                foreach (var info in directory.GetFileSystemInfos("*", SearchOption.AllDirectories))
+                {
+                    info.Attributes = FileAttributes.Normal;
+                }
+                
                 Directory.Delete(path, true);
+            }
 
             if (path != null) Directory.CreateDirectory(path);
         }
