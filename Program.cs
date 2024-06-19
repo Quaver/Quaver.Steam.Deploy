@@ -36,14 +36,6 @@ namespace Quaver.Steam.Deploy
             "osx-x64"
         };
 
-        private static string[] DllFiles { get; } =
-        {
-            "Quaver.Shared.dll",
-            "Quaver.API.dll",
-            "Quaver.Server.Common.dll",
-            "Quaver.Server.Client.dll",
-        };
-
         /// <summary>
         /// </summary>
         /// <param name="args"></param>
@@ -141,7 +133,7 @@ namespace Quaver.Steam.Deploy
             
             Console.WriteLine("Starting obfuscating client");
             // Run .NET Reactor for win-x64
-            var contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
+            var contentPath = $"{CompiledBuildPath}\\content-win-x64";
 
             var commandline =
                 $"-licensed -file {contentPath}\\Quaver.dll -files {contentPath}\\Quaver.Server.Client.dll;{contentPath}\\Quaver.Server.Common.dll -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
@@ -153,6 +145,9 @@ namespace Quaver.Steam.Deploy
 
             foreach (var platform in Platforms)
             {
+                if (platform == "win-x64")
+                    continue;
+                
                 var path = $"{CompiledBuildPath}\\content-{platform}";
                 File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
                 File.Copy(quaverServerCommon, $"{path}\\Quaver.Server.Common.dll", true);
@@ -229,7 +224,7 @@ namespace Quaver.Steam.Deploy
 
         private static bool RunCommand(string command, string args, bool showOutput = true)
         {
-            var psi = new ProcessStartInfo(command, args)
+            var processStartInfo = new ProcessStartInfo(command, args)
             {
                 WorkingDirectory = Environment.CurrentDirectory,
                 CreateNoWindow = true,
@@ -239,19 +234,19 @@ namespace Quaver.Steam.Deploy
                 WindowStyle = ProcessWindowStyle.Hidden
             };
 
-            var p = Process.Start(psi);
+            var process = Process.Start(processStartInfo);
 
-            if (p == null)
+            if (process == null)
                 return false;
 
             var output = "";
 
-            output += p.StandardOutput.ReadToEnd();
-            output += p.StandardError.ReadToEnd();
+            output += process.StandardOutput.ReadToEnd();
+            output += process.StandardError.ReadToEnd();
 
-            p.WaitForExit();
+            process.WaitForExit();
 
-            if (p.ExitCode == 0)
+            if (process.ExitCode == 0)
                 return true;
 
             if (showOutput)
