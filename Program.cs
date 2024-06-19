@@ -69,7 +69,7 @@ namespace Quaver.Steam.Deploy
         private static void CleanUp()
         {
             // Delete cloned project
-            // await DeleteAndCreate(SourceCodePath);
+            DeleteAndCreate(SourceCodePath);
             // Delete builds
             DeleteAndCreate(CompiledBuildPath);
             // Delete app_build.vdf
