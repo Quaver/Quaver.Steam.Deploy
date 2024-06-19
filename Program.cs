@@ -25,6 +25,8 @@ namespace Quaver.Steam.Deploy
         private static string RepoBranch { get; set; }
 
         private static Config Configuration { get; set; }
+        
+        private static List<GameBuild> GameBuilds { get; set; } = new();
 
         private static string[] Platforms { get; } =
         {
@@ -35,43 +37,43 @@ namespace Quaver.Steam.Deploy
 
         private static string[] DllFiles { get; } =
         {
-            "Quaver.API.dll",
-            "Quaver.Server.Client.dll",
-            "Quaver.Server.Common.dll",
             "Quaver.Shared.dll",
+            "Quaver.API.dll",
+            "Quaver.Server.Common.dll",
+            "Quaver.Server.Client.dll",
         };
 
         /// <summary>
         /// </summary>
         /// <param name="args"></param>
-        static async Task Main(string[] args)
+        static void Main(string[] args)
         {
             Configuration = Config.Deserialize();
             // ToDo SteamCmd download
-            await CleanUp();
-            await GameVersion();
-            await Branch();
-            await CloneProject();
-            await BuildProject();
-            await EncryptClient();
-            await HashProject();
-            await SubmitHashes();
-            await Deploy();
+            CleanUp();
+            GameVersion();
+            Branch();
+            CloneProject();
+            BuildProject();
+            EncryptClient();
+            HashProject();
+            SubmitHashes();
+            Deploy();
 
             // Avoid closing console
             Console.WriteLine("Press any key to close");
             Console.ReadLine();
         }
 
-        private static async Task CleanUp()
+        private static void CleanUp()
         {
             // Delete cloned project
             // await DeleteAndCreate(SourceCodePath);
             // Delete builds
-            await DeleteAndCreate(CompiledBuildPath);
+            DeleteAndCreate(CompiledBuildPath);
         }
 
-        private static async Task DeleteAndCreate(string path)
+        private static void DeleteAndCreate(string path)
         {
             if (Directory.Exists(path))
                 Directory.Delete(path, true);
@@ -79,7 +81,7 @@ namespace Quaver.Steam.Deploy
             if (path != null) Directory.CreateDirectory(path);
         }
 
-        private static async Task GameVersion()
+        private static void GameVersion()
         {
             Console.Write("Enter a version number for the client: ");
 
@@ -87,7 +89,7 @@ namespace Quaver.Steam.Deploy
                 Version = Console.ReadLine();
         }
 
-        private static async Task Branch()
+        private static void Branch()
         {
             Console.Write("Enter which branch we are building: ");
 
@@ -95,18 +97,18 @@ namespace Quaver.Steam.Deploy
                 RepoBranch = Console.ReadLine();
         }
 
-        private static async Task CloneProject()
+        private static void CloneProject()
         {
             var scriptContent =
                 $"git clone --recurse-submodules -b {RepoBranch} --single-branch {Configuration.Repository} {SourceCodePath}";
 
-            Console.WriteLine("Please clone the project");
+            Console.WriteLine("Please run this commant in new terminal!");
             Console.WriteLine(scriptContent);
             Console.WriteLine("Press enter when it finished to continue!");
             Console.ReadLine();
         }
 
-        private static async Task BuildProject()
+        private static void BuildProject()
         {
             // Update project version
             // Temporary fix until we ship Monogame dll instead submodule
@@ -114,37 +116,34 @@ namespace Quaver.Steam.Deploy
 
             foreach (var platform in Platforms)
             {
-                var version = $"'{Version}' for {platform}";
+                Console.WriteLine($"Starting compiling {platform}!");
                 var dir = $"{CompiledBuildPath}/content-{platform}";
 
                 RunCommand("dotnet",
                     $"publish {SourceCodePath} -f {Configuration.NetFramework} -r {platform} -c Public -o {dir} --self-contained",
                     false);
-
-                Console.WriteLine($"Finished compiling {version}!");
             }
 
-            Console.WriteLine("Successfully finished compiling all Quaver versions!");
+            Console.WriteLine("Successfully finished compiling for all platforms!");
         }
 
-        private static async Task EncryptClient()
+        private static void EncryptClient()
         {
             Console.WriteLine("Starting encrypting client");
-            // ToDo Run Reactor & move encrypted dlls to all platforms
             // Run .NET Reactor for win-x64
-            string contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
+            var contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
 
-            string commandline =
+            var commandline =
                 $"-licensed -file {contentPath}\\Quaver.dll -files {contentPath}\\Quaver.Server.Client.dll;{contentPath}\\Quaver.Server.Common.dll -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
 
             RunCommand(Configuration.NetReactor, commandline);
 
-            string quaverServerClient = $"{contentPath}\\Quaver.Server.Client_Secure\\Quaver.Server.Client.dll";
-            string quaverServerCommon = $"{contentPath}\\Quaver.Server.Common_Secure\\Quaver.Server.Common.dll";
+            var quaverServerClient = $"{contentPath}\\Quaver.Server.Client_Secure\\Quaver.Server.Client.dll";
+            var quaverServerCommon = $"{contentPath}\\Quaver.Server.Common_Secure\\Quaver.Server.Common.dll";
 
             foreach (var platform in Platforms)
             {
-                string path = $"{CompiledBuildPath}\\content-{platform}";
+                var path = $"{CompiledBuildPath}\\content-{platform}";
                 File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
                 File.Copy(quaverServerCommon, $"{path}\\Quaver.Server.Common.dll", true);
             }
@@ -153,39 +152,42 @@ namespace Quaver.Steam.Deploy
             Console.WriteLine("Finished encrypting");
         }
 
-        private static async Task HashProject()
+        private static void HashProject()
         {
             foreach (var platform in Platforms)
             {
-                Console.WriteLine($"Platform: {Version} {platform}");
-                
-                var dir = $"{CompiledBuildPath}/content-{platform}";
-            
-                var hashes = new List<string>();
-                
-                foreach (string dllFile in DllFiles)
+                var gameBuild = new GameBuild
                 {
-                    using (var md5 = MD5.Create())
-                    {
-                        using (var stream = File.OpenRead($"{dir}/{dllFile}"))
-                        {
-                            byte[] hash = md5.ComputeHash(stream);
-                            string hashString = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
-                            Console.WriteLine($"{Path.GetFileName(dllFile)}: {hashString}");
-                            hashes.Add(hashString);
-                        }
-                    }
-                }
+                    Name = Version,
+                    QuaverSharedMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.dll"),
+                    QuaverApiMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.API.dll"),
+                    QuaverServerCommonMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.Server.Common.dll"),
+                    QuaverServerClientMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.Server.Client.dll")
+                };
+                GameBuilds.Add(gameBuild);
             }
         }
 
-        private static async Task SubmitHashes()
+        private static string GetHash(string path)
+        {
+            using var md5 = MD5.Create();
+            using var stream = File.OpenRead(path);
+            var hash = md5.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+
+        private static void SubmitHashes()
         {
             // ToDo
             Console.WriteLine("Submitting hashes to Quaver's database WIP");
+            // Temporarily until API is ready
+            foreach (var gameBuild in GameBuilds)
+            {
+                Console.WriteLine(gameBuild);
+            }
         }
 
-        private static async Task Deploy()
+        private static void Deploy()
         {
             // ToDo
             // Delete the reactor folders
