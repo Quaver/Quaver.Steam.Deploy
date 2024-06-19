@@ -205,16 +205,16 @@ namespace Quaver.Steam.Deploy
             Console.Write("Enter Steam Two Factor Authentication Code: ");
             var code = Console.ReadLine();
             
-            Console.WriteLine("Deploying to Steam...");
-            
-            // Deploy to Steam
-            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
-            
             // Delete the reactor folders
             string contentPath = $"{CompiledBuildPath}\\content-content-win-x64";
             Directory.Delete($"{contentPath}\\Quaver_Secure", true);
             Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
             Directory.Delete($"{contentPath}\\Quaver.Server.Common_Secure", true);
+            
+            Console.WriteLine("Deploying to Steam...");
+            
+            // Deploy to Steam
+            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
 
             Console.WriteLine("Finished deploying!");
         }
