@@ -97,10 +97,10 @@ namespace Quaver.Steam.Deploy
         {
             var scriptContent =
                 $"git clone --recurse-submodules -b {RepoBranch} --single-branch {Configuration.Repository} {SourceCodePath}";
-
-            Console.WriteLine("Please run this commant in new terminal!");
-            Console.WriteLine(scriptContent);
-            Console.WriteLine("Press enter when it finished to continue!");
+            
+            RunCommandInNewTerminal(scriptContent);
+            
+            Console.WriteLine("Press enter when it finishes to continue!");
             Console.ReadLine();
         }
 
@@ -255,6 +255,21 @@ namespace Quaver.Steam.Deploy
             return false;
         }
 
+        private static void RunCommandInNewTerminal(string command)
+        {
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/K {command}",
+                UseShellExecute = true,
+                CreateNoWindow = false
+            };
+
+            using var process = new Process();
+            process.StartInfo = processStartInfo;
+            process.Start();
+        }
+        
         private static void UpdateProjectVersion(string projectFilePath, string newVersion)
         {
             try
