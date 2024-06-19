@@ -73,8 +73,8 @@ namespace Quaver.Steam.Deploy
             // Delete builds
             DeleteAndCreate(CompiledBuildPath);
             // Delete app_build.vdf
-            if (Directory.Exists($"{CurrentDirectory}/Scripts/app_build.vdf"))
-                Directory.Delete($"{CurrentDirectory}/Scripts/app_build.vdf");
+            if (Directory.Exists($"{CurrentDirectory}\\Scripts\\app_build.vdf"))
+                Directory.Delete($"{CurrentDirectory}\\Scripts\\app_build.vdf");
         }
 
         private static void DeleteAndCreate(string path)
@@ -116,12 +116,12 @@ namespace Quaver.Steam.Deploy
         {
             // Update project version
             // Temporary fix until we ship Monogame dll instead submodule
-            UpdateProjectVersion($"{SourceCodePath}/Quaver/Quaver.csproj", Version);
+            UpdateProjectVersion($"{SourceCodePath}\\Quaver\\Quaver.csproj", Version);
 
             foreach (var platform in Platforms)
             {
                 Console.WriteLine($"Starting compiling {platform}!");
-                var dir = $"{CompiledBuildPath}/content-{platform}";
+                var dir = $"{CompiledBuildPath}\\content-{platform}";
 
                 RunCommand("dotnet",
                     $"publish {SourceCodePath} -f {Configuration.NetFramework} -r {platform} -c Public -o {dir} --self-contained",
@@ -163,10 +163,10 @@ namespace Quaver.Steam.Deploy
                 var gameBuild = new GameBuild
                 {
                     Name = Version,
-                    QuaverSharedMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.dll"),
-                    QuaverApiMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.API.dll"),
-                    QuaverServerCommonMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.Server.Common.dll"),
-                    QuaverServerClientMd5 = GetHash($"{CompiledBuildPath}/content-{platform}/Quaver.Server.Client.dll")
+                    QuaverSharedMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.dll"),
+                    QuaverApiMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.API.dll"),
+                    QuaverServerCommonMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Common.dll"),
+                    QuaverServerClientMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Client.dll")
                 };
                 GameBuilds.Add(gameBuild);
             }
@@ -199,10 +199,10 @@ namespace Quaver.Steam.Deploy
             }
             
             // Create app_build.vdf
-            var appBuildTemplate = File.ReadAllText($"{CurrentDirectory}/Scripts/app_build.template.vdf");
+            var appBuildTemplate = File.ReadAllText($"{CurrentDirectory}\\Scripts\\app_build.template.vdf");
             var appBuild = appBuildTemplate.Replace("{build_desc}", $"{Version}");
-            File.Create($"{CurrentDirectory}/Scripts/app_build.vdf").Dispose();
-            File.WriteAllText($"{CurrentDirectory}/Scripts/app_build.vdf", appBuild);
+            File.Create($"{CurrentDirectory}\\Scripts\\app_build.vdf").Dispose();
+            File.WriteAllText($"{CurrentDirectory}\\Scripts\\app_build.vdf", appBuild);
             
             Console.Write("Enter Steam Two Factor Authentication Code: ");
             var code = Console.ReadLine();
@@ -210,13 +210,13 @@ namespace Quaver.Steam.Deploy
             Console.WriteLine("Deploying to Steam...");
             
             // Deploy to Steam
-            RunCommand(SteamCMDPath + "/steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
+            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
             
             // Delete the reactor folders
             string contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
-            Directory.Delete($"{contentPath}/Quaver_Secure", true);
-            Directory.Delete($"{contentPath}/Quaver.Server.Client_Secure", true);
-            Directory.Delete($"{contentPath}/Quaver.Server.Common_Secure", true);
+            Directory.Delete($"{contentPath}\\Quaver_Secure", true);
+            Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
+            Directory.Delete($"{contentPath}\\Quaver.Server.Common_Secure", true);
 
             Console.WriteLine("Finished deploying!");
         }
@@ -307,7 +307,7 @@ namespace Quaver.Steam.Deploy
                 ZipFile.ExtractToDirectory($"./{steamCMDName}", SteamCMDPath);
                 
                 Console.WriteLine("Installing SteamCMD...");
-                RunCommand($"{SteamCMDPath}/steamcmd.exe", $"+quit", false);
+                RunCommand($"{SteamCMDPath}\\steamcmd.exe", $"+quit", false);
             }
 
             if (File.Exists($"./{steamCMDName}"))
