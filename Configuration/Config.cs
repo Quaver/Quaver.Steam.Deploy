@@ -1,10 +1,21 @@
 using System.IO;
-using Newtonsoft.Json;
+using System.Text.Json;
+using System.Xml;
 
 namespace Quaver.Steam.Deploy.Configuration
 {
     public class Config
     {
+        /// <summary>
+        ///     Steam Username
+        /// </summary>
+        public string SteamUsername { get; set; } = "";
+        
+        /// <summary>
+        ///     Steam Password
+        /// </summary>
+        public string SteamPassword { get; set; } = "";
+        
         /// <summary>
         ///     SSH URL of the repository
         /// </summary>
@@ -55,10 +66,9 @@ namespace Quaver.Steam.Deploy.Configuration
             Config parsedConfig;
 
             // Deserialize it if it already exists.
-            using (var file = File.OpenText(path))
+            using (var fileStream = File.OpenRead(path))
             {
-                var serializer = new JsonSerializer();
-                parsedConfig = (Config)serializer.Deserialize(file, typeof(Config));
+                parsedConfig = JsonSerializer.Deserialize<Config>(fileStream);
             }
 
             // Do an initial save on the config.
@@ -74,7 +84,11 @@ namespace Quaver.Steam.Deploy.Configuration
         {
             using (var sw = new StreamWriter(Path))
             {
-                var output = JsonConvert.SerializeObject(this, Formatting.Indented);
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                };
+                var output = JsonSerializer.Serialize(this, options);
                 sw.Write(output);
             }
         }

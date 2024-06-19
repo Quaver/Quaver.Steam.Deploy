@@ -1,0 +1,12 @@
+"DepotBuildConfig"
+{
+	"DepotID" "980612"
+	"ContentRoot" "..\\build\\content-osx-x64"
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"Recursive" "1"
+  }
+  "FileExclusion" "*.pdb"
+}

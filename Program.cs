@@ -72,6 +72,9 @@ namespace Quaver.Steam.Deploy
             // await DeleteAndCreate(SourceCodePath);
             // Delete builds
             DeleteAndCreate(CompiledBuildPath);
+            // Delete app_build.vdf
+            if (Directory.Exists($"{CurrentDirectory}/Scripts/app_build.vdf"))
+                Directory.Delete($"{CurrentDirectory}/Scripts/app_build.vdf");
         }
 
         private static void DeleteAndCreate(string path)
@@ -179,7 +182,6 @@ namespace Quaver.Steam.Deploy
 
         private static void SubmitHashes()
         {
-            // ToDo
             Console.WriteLine("Submitting hashes to Quaver's database WIP");
             // Temporarily until API is ready
             foreach (var gameBuild in GameBuilds)
@@ -190,14 +192,33 @@ namespace Quaver.Steam.Deploy
 
         private static void Deploy()
         {
-            // ToDo
+            if(!Configuration.DeployToSteam)
+            {
+                Console.WriteLine("Deploying to Steam is disabled in the config file. Skipping...");
+                return;
+            }
+            
+            // Create app_build.vdf
+            var appBuildTemplate = File.ReadAllText($"{CurrentDirectory}/Scripts/app_build.template.vdf");
+            var appBuild = appBuildTemplate.Replace("{build_desc}", $"{Version}");
+            File.Create($"{CurrentDirectory}/Scripts/app_build.vdf").Dispose();
+            File.WriteAllText($"{CurrentDirectory}/Scripts/app_build.vdf", appBuild);
+            
+            Console.Write("Enter Steam Two Factor Authentication Code: ");
+            var code = Console.ReadLine();
+            
+            Console.WriteLine("Deploying to Steam...");
+            
+            // Deploy to Steam
+            RunCommand(SteamCMDPath + "/steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
+            
             // Delete the reactor folders
             string contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
             Directory.Delete($"{contentPath}/Quaver_Secure", true);
             Directory.Delete($"{contentPath}/Quaver.Server.Client_Secure", true);
             Directory.Delete($"{contentPath}/Quaver.Server.Common_Secure", true);
-            
-            Console.WriteLine("Deploying to Steam... (not yet lol)");
+
+            Console.WriteLine("Finished deploying!");
         }
 
         private static bool RunCommand(string command, string args, bool showOutput = true)
@@ -277,17 +298,16 @@ namespace Quaver.Steam.Deploy
         private static void SetupSteamCMD()
         {
             var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
-            var steamCMDPath = "./steamcmd";
             var steamCMDName = "steamcmd.zip";
 
-            if (!Directory.Exists(steamCMDPath))
+            if (!Directory.Exists(SteamCMDPath))
             {
                 Console.WriteLine("Downloading SteamCMD...");
                 DownloadFile(steamCMDUrl, steamCMDName);
-                ZipFile.ExtractToDirectory($"./{steamCMDName}", steamCMDPath);
+                ZipFile.ExtractToDirectory($"./{steamCMDName}", SteamCMDPath);
                 
                 Console.WriteLine("Installing SteamCMD...");
-                RunCommand($"{steamCMDPath}/steamcmd.exe", $"+quit", false);
+                RunCommand($"{SteamCMDPath}/steamcmd.exe", $"+quit", false);
             }
 
             if (File.Exists($"./{steamCMDName}"))
@@ -295,7 +315,6 @@ namespace Quaver.Steam.Deploy
                 File.Delete($"./{steamCMDName}");
             }
         }
-        
         
         static void DownloadFile(string url, string fileName)
         {

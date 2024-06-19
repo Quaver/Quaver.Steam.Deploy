@@ -1,0 +1,12 @@
+"DepotBuildConfig"
+{
+	"DepotID" "980613"
+	"ContentRoot" "..\\build\\content-linux-x64"
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"Recursive" "1"
+  }
+  "FileExclusion" "*.pdb"
+}
