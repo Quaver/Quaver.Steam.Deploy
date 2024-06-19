@@ -2,9 +2,10 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Threading.Tasks;
+using System.IO.Compression;
 using Quaver.Steam.Deploy.Configuration;
 using System.Linq;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Xml.Linq;
 
@@ -49,7 +50,7 @@ namespace Quaver.Steam.Deploy
         static void Main(string[] args)
         {
             Configuration = Config.Deserialize();
-            // ToDo SteamCmd download
+            SetupSteamCMD();
             CleanUp();
             GameVersion();
             Branch();
@@ -272,37 +273,39 @@ namespace Quaver.Steam.Deploy
                 Console.WriteLine($"Error updating version: {ex.Message}");
             }
         }
+        
+        private static void SetupSteamCMD()
+        {
+            var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
+            var steamCMDPath = "./steamcmd";
+            var steamCMDName = "steamcmd.zip";
 
-        // private static async Task DetectSteamCMD()
-        // {
-        //     var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
-        //     var steamCMDPath = "./steamcmd";
-        //     var steamCMDName = "steamcmd.zip";
-        //
-        //     if (!Directory.Exists(steamCMDPath))
-        //     {
-        //         await DownloadFileAsync(steamCMDUrl, steamCMDName);
-        //         ZipFile.ExtractToDirectory($"./{steamCMDName}", steamCMDPath);
-        //     }
-        //
-        //     if (File.Exists($"./{steamCMDName}"))
-        //     {
-        //         File.Delete($"./{steamCMDName}");
-        //     }
-        // }
-        //
-        // static async Task DownloadFileAsync(string url, string fileName)
-        // {
-        //     using (HttpClient client = new HttpClient())
-        //     {
-        //         HttpResponseMessage response = await client.GetAsync(url);
-        //         response.EnsureSuccessStatusCode();
-        //
-        //         using (FileStream fs = new FileStream($"./{fileName}", FileMode.Create, FileAccess.Write, FileShare.None))
-        //         {
-        //             await response.Content.CopyToAsync(fs);
-        //         }
-        //     }
-        // }
+            if (!Directory.Exists(steamCMDPath))
+            {
+                Console.WriteLine("Downloading SteamCMD...");
+                DownloadFile(steamCMDUrl, steamCMDName);
+                ZipFile.ExtractToDirectory($"./{steamCMDName}", steamCMDPath);
+                
+                Console.WriteLine("Installing SteamCMD...");
+                RunCommand($"{steamCMDPath}/steamcmd.exe", $"+quit", false);
+            }
+
+            if (File.Exists($"./{steamCMDName}"))
+            {
+                File.Delete($"./{steamCMDName}");
+            }
+        }
+        
+        
+        static void DownloadFile(string url, string fileName)
+        {
+            using HttpClient client = new HttpClient();
+            using HttpResponseMessage response = client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).Result;
+            response.EnsureSuccessStatusCode();
+
+            using Stream stream = response.Content.ReadAsStream();
+            using FileStream fileStream = new FileStream($"./{fileName}", FileMode.Create, FileAccess.Write, FileShare.None);
+            stream.CopyTo(fileStream);
+        }
     }
 }
