@@ -145,9 +145,6 @@ namespace Quaver.Steam.Deploy
 
             foreach (var platform in Platforms)
             {
-                if (platform == "win-x64")
-                    continue;
-                
                 var path = $"{CompiledBuildPath}\\content-{platform}";
                 File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
                 File.Copy(quaverServerCommon, $"{path}\\Quaver.Server.Common.dll", true);
@@ -214,7 +211,7 @@ namespace Quaver.Steam.Deploy
             RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
             
             // Delete the reactor folders
-            string contentPath = $"{CompiledBuildPath}\\content-{Platforms[0]}";
+            string contentPath = $"{CompiledBuildPath}\\content-content-win-x64";
             Directory.Delete($"{contentPath}\\Quaver_Secure", true);
             Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
             Directory.Delete($"{contentPath}\\Quaver.Server.Common_Secure", true);
