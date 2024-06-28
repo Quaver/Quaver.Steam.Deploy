@@ -171,7 +171,7 @@ namespace Quaver.Steam.Deploy
                 var gameBuild = new GameBuild
                 {
                     Name = Version,
-                    QuaverSharedMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.dll"),
+                    QuaverSharedMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Shared.dll"),
                     QuaverApiMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.API.dll"),
                     QuaverServerCommonMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Common.dll"),
                     QuaverServerClientMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Client.dll")
