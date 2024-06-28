@@ -1,30 +1,56 @@
 using System.IO;
-using Newtonsoft.Json;
+using System.Text.Json;
+using System.Xml;
 
 namespace Quaver.Steam.Deploy.Configuration
 {
     public class Config
     {
         /// <summary>
-        ///     The directory of where Quaver is housed.
+        ///     Steam Username
         /// </summary>
-        public string QuaverProjectDirectory { get; set; } = "";
-
+        public string SteamUsername { get; set; } = "";
+        
         /// <summary>
-        ///     The directory of the Steam Content Builder
+        ///     Steam Password
         /// </summary>
-        public string ContentBuilderDirectory { get; set; } = "";
-
+        public string SteamPassword { get; set; } = "";
+        
         /// <summary>
-        ///     Whether or not the tool should zip up the builds
+        ///     SSH URL of the repository
         /// </summary>
-        public bool ZipBuilds { get; set; }
-
+        public string Repository { get; set; } = "git@github.com:Quaver/Quaver.git";
+        
+        /// <summary>
+        ///     .NET Framework
+        /// </summary>
+        public string NetFramework { get; set; } = "net6.0";
+        
+        /// <summary>
+        ///     .NET Framework
+        /// </summary>
+        public string NetConfiguration { get; set; } = "Public";
+        
+        /// <summary>
+        ///     Path to .NET Reactor runnable
+        /// </summary>
+        public string NetReactor { get; set; } = "";
+        
+        /// <summary>
+        ///     Quaver API Key
+        /// </summary>
+        public string QuaverAPIKey { get; set; } = "";
+        
         /// <summary>
         ///     Whether or not the script will deploy the builds to Steam
         /// </summary>
         public bool DeployToSteam { get; set; }
-
+        
+        /// <summary>
+        ///     Run .NET Reactor
+        /// </summary>
+        public bool RunReactor { get; set; }
+        
         /// <summary>
         ///     The path of the config file.
         /// </summary>
@@ -50,10 +76,9 @@ namespace Quaver.Steam.Deploy.Configuration
             Config parsedConfig;
 
             // Deserialize it if it already exists.
-            using (var file = File.OpenText(path))
+            using (var fileStream = File.OpenRead(path))
             {
-                var serializer = new JsonSerializer();
-                parsedConfig = (Config)serializer.Deserialize(file, typeof(Config));
+                parsedConfig = JsonSerializer.Deserialize<Config>(fileStream);
             }
 
             // Do an initial save on the config.
@@ -69,7 +94,11 @@ namespace Quaver.Steam.Deploy.Configuration
         {
             using (var sw = new StreamWriter(Path))
             {
-                var output = JsonConvert.SerializeObject(this, Formatting.Indented);
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                };
+                var output = JsonSerializer.Serialize(this, options);
                 sw.Write(output);
             }
         }

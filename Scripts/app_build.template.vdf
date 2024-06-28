@@ -1,0 +1,15 @@
+"AppBuild"
+{
+  "AppID" "980610"
+  "Desc" "{build_desc}"
+  "BuildOutput" "./build_output"
+  "ContentRoot" "./"
+  "Preview" "0"
+  "SetLive" "private"
+  "Depots"
+  {
+    "980611" "./depot_build_980611.vdf"
+    "980612" "./depot_build_980612.vdf"
+    "980613" "./depot_build_980613.vdf"
+  }
+}

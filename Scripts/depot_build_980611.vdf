@@ -1,0 +1,15 @@
+"DepotBuildConfig"
+{
+	"DepotID" "980611"
+	"ContentRoot" "..\\build\\content-win-x64"
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"Recursive" "1"
+  }
+  "FileExclusion" "*.pdb"
+  "FileExclusion" "Quaver_Secure"
+  "FileExclusion" "Quaver.Server.Client_Secure"
+  "FileExclusion" "Quaver.Server.Common_Secure"
+}
