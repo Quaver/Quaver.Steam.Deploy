@@ -126,7 +126,7 @@ namespace Quaver.Steam.Deploy
                 var dir = $"{CompiledBuildPath}\\content-{platform}";
 
                 RunCommand("dotnet",
-                    $"publish {SourceCodePath} -f {Configuration.NetFramework} -r {platform} -c Public -o {dir} --self-contained",
+                    $"publish {SourceCodePath} -f {Configuration.NetFramework} -r {platform} -c {Configuration.NetConfiguration} -o {dir} --self-contained",
                     false);
             }
 

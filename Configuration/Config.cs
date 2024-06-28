@@ -27,6 +27,11 @@ namespace Quaver.Steam.Deploy.Configuration
         public string NetFramework { get; set; } = "net6.0";
         
         /// <summary>
+        ///     .NET Framework
+        /// </summary>
+        public string NetConfiguration { get; set; } = "Public";
+        
+        /// <summary>
         ///     Path to .NET Reactor runnable
         /// </summary>
         public string NetReactor { get; set; } = "";
