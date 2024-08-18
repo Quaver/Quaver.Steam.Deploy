@@ -1,7 +1,5 @@
 using System.IO;
 using System.Text.Json;
-using System.Xml;
-
 namespace Quaver.Steam.Deploy.Configuration
 {
     public class Config
@@ -37,9 +35,9 @@ namespace Quaver.Steam.Deploy.Configuration
         public string NetReactor { get; set; } = "";
         
         /// <summary>
-        ///     Quaver API Key
+        ///     Quaver API JWT
         /// </summary>
-        public string QuaverAPIKey { get; set; } = "";
+        public string QuaverAPIJWT { get; set; } = "";
         
         /// <summary>
         ///     Whether or not the script will deploy the builds to Steam
