@@ -4,6 +4,8 @@ namespace Quaver.Steam.Deploy.Configuration
 {
     public class Config
     {
+        private static string ConfigPath { get; set; }
+
         /// <summary>
         ///     Steam Username
         /// </summary>
@@ -37,7 +39,7 @@ namespace Quaver.Steam.Deploy.Configuration
         /// <summary>
         ///     Quaver API JWT
         /// </summary>
-        public string QuaverAPIJWT { get; set; } = "";
+        public string QuaverApijwt { get; set; } = "";
         
         /// <summary>
         ///     Whether or not the script will deploy the builds to Steam
@@ -52,29 +54,29 @@ namespace Quaver.Steam.Deploy.Configuration
         /// <summary>
         ///     The path of the config file.
         /// </summary>
-        public static string Path => $"{Directory.GetCurrentDirectory()}/config.json";
+        public static string Path => ConfigPath ?? System.IO.Path.Combine(Directory.GetCurrentDirectory(), "config.json");
 
         /// <summary>
         ///     Deserializes the config into an object.
         /// </summary>
         /// <returns></returns>
-        public static Config Deserialize()
+        public static Config Deserialize(string path = null)
         {
-            const string path = "./config.json";
+            ConfigPath = path ?? Path;
 
             // If the file doesn't exist, then we'll want to create the file, then throw a FileNotFoundException
-            if (!File.Exists(path))
+            if (!File.Exists(ConfigPath))
             {
                 var config = new Config();
                 config.Save();
 
-                throw new FileNotFoundException("config.json file was not found. A template has been created for you.");
+                throw new FileNotFoundException($"config.json file was not found at {ConfigPath}. A template has been created for you.");
             }
 
             Config parsedConfig;
 
             // Deserialize it if it already exists.
-            using (var fileStream = File.OpenRead(path))
+            using (var fileStream = File.OpenRead(ConfigPath))
             {
                 parsedConfig = JsonSerializer.Deserialize<Config>(fileStream);
             }
