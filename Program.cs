@@ -33,7 +33,8 @@ namespace Quaver.Steam.Deploy
         {
             "win-x64",
             "linux-x64",
-            "osx-x64"
+            "osx-x64",
+            "osx-arm",
         };
 
         /// <summary>
@@ -158,7 +159,6 @@ namespace Quaver.Steam.Deploy
                 File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
             }
             
-            // ToDo webhook upload mapping files to ac2 or to db
             Console.WriteLine("Finished obfuscating");
         }
 
@@ -215,13 +215,21 @@ namespace Quaver.Steam.Deploy
             
             // Delete the reactor folders
             string contentPath = $"{CompiledBuildPath}\\content-win-x64";
-            Directory.Delete($"{contentPath}\\Quaver_Secure", true);
-            Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
-            
+
+            if (Directory.Exists($"{contentPath}\\Quaver_Secure"))
+            {
+                Directory.Delete($"{contentPath}\\Quaver_Secure", true);
+            }
+
+            if (Directory.Exists($"{contentPath}\\Quaver.Server.Client_Secure"))
+            {
+                Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
+            }
+
             Console.WriteLine("Deploying to Steam...");
             
             // Deploy to Steam
-            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
+            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", true);
 
             Console.WriteLine("Finished deploying!");
         }
