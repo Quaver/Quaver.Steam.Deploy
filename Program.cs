@@ -33,7 +33,8 @@ namespace Quaver.Steam.Deploy
         {
             "win-x64",
             "linux-x64",
-            "osx-x64"
+            "osx-x64",
+            "osx-arm",
         };
 
         /// <summary>
@@ -89,7 +90,7 @@ namespace Quaver.Steam.Deploy
 
         private static void GameVersion()
         {
-            Console.Write("Enter a version number for the client: ");
+            Console.Write("Enter a version number for the client (e.g. 1.5.1.1): ");
 
             while (string.IsNullOrEmpty(Version))
                 Version = Console.ReadLine();
@@ -146,21 +147,18 @@ namespace Quaver.Steam.Deploy
             var contentPath = $"{CompiledBuildPath}\\content-win-x64";
 
             var commandline =
-                $"-licensed -file {contentPath}\\Quaver.dll -files {contentPath}\\Quaver.Server.Client.dll;{contentPath}\\Quaver.Server.Common.dll -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
+                $"-licensed -file {contentPath}\\Quaver.dll -files {contentPath}\\Quaver.Server.Client.dll -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
 
             RunCommand(Configuration.NetReactor, commandline);
 
             var quaverServerClient = $"{contentPath}\\Quaver.Server.Client_Secure\\Quaver.Server.Client.dll";
-            var quaverServerCommon = $"{contentPath}\\Quaver.Server.Common_Secure\\Quaver.Server.Common.dll";
 
             foreach (var platform in Platforms)
             {
                 var path = $"{CompiledBuildPath}\\content-{platform}";
                 File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
-                File.Copy(quaverServerCommon, $"{path}\\Quaver.Server.Common.dll", true);
             }
             
-            // ToDo webhook upload mapping files to ac2 or to db
             Console.WriteLine("Finished obfuscating");
         }
 
@@ -173,7 +171,6 @@ namespace Quaver.Steam.Deploy
                     Name = Version,
                     QuaverSharedMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Shared.dll"),
                     QuaverApiMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.API.dll"),
-                    QuaverServerCommonMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Common.dll"),
                     QuaverServerClientMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Client.dll")
                 };
                 GameBuilds.Add(gameBuild);
@@ -190,11 +187,12 @@ namespace Quaver.Steam.Deploy
 
         private static void SubmitHashes()
         {
-            Console.WriteLine("Submitting hashes to Quaver's database WIP");
-            // Temporarily until API is ready
+            Console.WriteLine("Submitting hashes");
+            
             foreach (var gameBuild in GameBuilds)
             {
                 Console.WriteLine(gameBuild);
+                gameBuild.SendBuild(Configuration.QuaverAPIJWT);
             }
         }
 
@@ -217,14 +215,21 @@ namespace Quaver.Steam.Deploy
             
             // Delete the reactor folders
             string contentPath = $"{CompiledBuildPath}\\content-win-x64";
-            Directory.Delete($"{contentPath}\\Quaver_Secure", true);
-            Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
-            Directory.Delete($"{contentPath}\\Quaver.Server.Common_Secure", true);
-            
+
+            if (Directory.Exists($"{contentPath}\\Quaver_Secure"))
+            {
+                Directory.Delete($"{contentPath}\\Quaver_Secure", true);
+            }
+
+            if (Directory.Exists($"{contentPath}\\Quaver.Server.Client_Secure"))
+            {
+                Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
+            }
+
             Console.WriteLine("Deploying to Steam...");
             
             // Deploy to Steam
-            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", false);
+            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", true);
 
             Console.WriteLine("Finished deploying!");
         }
