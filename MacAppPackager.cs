@@ -98,10 +98,10 @@ internal static class MacAppPackager
 
                - (void)launchQuaverWithArguments:(NSArray<NSString *> *)arguments {
                    NSString *installDirectory = [self installDirectory];
-                   NSString *binaryPath = [installDirectory stringByAppendingPathComponent:@"Quaver.bin"];
+                   NSString *launcherPath = [installDirectory stringByAppendingPathComponent:@"Quaver"];
 
                    NSTask *task = [[NSTask alloc] init];
-                   task.executableURL = [NSURL fileURLWithPath:binaryPath];
+                   task.executableURL = [NSURL fileURLWithPath:launcherPath];
                    task.currentDirectoryURL = [NSURL fileURLWithPath:installDirectory isDirectory:YES];
                    task.arguments = arguments ?: @[];
 
@@ -111,7 +111,7 @@ internal static class MacAppPackager
 
                    NSError *error = nil;
                    if (![task launchAndReturnError:&error]) {
-                       NSLog(@"Failed to launch Quaver.bin: %@", error);
+                       NSLog(@"Failed to launch Quaver: %@", error);
                    }
 
                    self.launchedGame = YES;
