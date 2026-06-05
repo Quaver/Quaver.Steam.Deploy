@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Formats.Tar;
 using Quaver.Steam.Deploy.Configuration;
 using System.Linq;
 using System.Net.Http;
@@ -34,8 +35,8 @@ namespace Quaver.Steam.Deploy
 
         private static string[] Platforms { get; } =
         {
-            // "win-x64",
-            // "linux-x64",
+            "win-x64",
+            "linux-x64",
             "osx-x64",
             "osx-arm64",
         };
@@ -47,17 +48,17 @@ namespace Quaver.Steam.Deploy
         {
             Directory.SetCurrentDirectory(CurrentDirectory);
             Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
-            //SetupSteamCMD();
+            SetupSteamCMD();
             //CleanUp();
-            //GameVersion();
-            //Branch();
+            GameVersion();
+            Branch();
             //CloneProject();
             BuildProject();
             //ObfuscateClient();
             MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
             //HashProject();
             //SubmitHashes();
-            //Deploy();
+            Deploy();
 
             // Avoid closing console
             Console.WriteLine("Press any key to close");
@@ -66,7 +67,7 @@ namespace Quaver.Steam.Deploy
 
         private static void CleanUp()
         {
-            // Delete cloned project
+            // Delete source code
             DeleteAndCreate(SourceCodePath);
             // Delete builds
             DeleteAndCreate(CompiledBuildPath);
@@ -80,7 +81,7 @@ namespace Quaver.Steam.Deploy
         {
             if (Directory.Exists(path))
             {
-                // This resolves not allowing us to delete git folder
+                // This resolves not allowing us to delete git
                 var directory = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
 
                 foreach (var info in directory.GetFileSystemInfos("*", SearchOption.AllDirectories))
@@ -124,7 +125,7 @@ namespace Quaver.Steam.Deploy
         private static void BuildProject()
         {
             // Update project version
-            // Temporary fix until we ship Monogame dll instead submodule
+            // Temporary fix until we ship Monogame dll instead of submodule
             UpdateProjectVersion(ClientProjectPath, Version);
 
             foreach (var platform in Platforms)
@@ -274,6 +275,20 @@ namespace Quaver.Steam.Deploy
         private static string GetSteamCmdExecutableName()
         {
             return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "steamcmd.exe" : "steamcmd.sh";
+        }
+
+        private static (string Url, string ArchiveName, bool IsZip) GetSteamCmdPackage()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return ("https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip", "steamcmd.zip", true);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return ("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz", "steamcmd_osx.tar.gz", false);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return ("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz", "steamcmd_linux.tar.gz", false);
+
+            throw new PlatformNotSupportedException("SteamCMD is only supported on Windows, macOS, and Linux.");
         }
 
         private static bool RunCommand(string command, string args, bool showOutput = true)
@@ -504,33 +519,59 @@ namespace Quaver.Steam.Deploy
         
         private static void SetupSteamCMD()
         {
-            var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
-            var steamCMDName = "steamcmd.zip";
+            var steamCmdPackage = GetSteamCmdPackage();
+            var steamCmdArchivePath = Path.Combine(CurrentDirectory, steamCmdPackage.ArchiveName);
+            var steamCmdExecutable = Path.Combine(SteamCmdPath, GetSteamCmdExecutableName());
 
-            if (!Directory.Exists(SteamCmdPath))
+            if (!File.Exists(steamCmdExecutable))
             {
                 Console.WriteLine("Downloading SteamCMD...");
-                DownloadFile(steamCMDUrl, steamCMDName);
-                ZipFile.ExtractToDirectory($"./{steamCMDName}", SteamCmdPath);
-                
+                DownloadFile(steamCmdPackage.Url, steamCmdArchivePath);
+                Directory.CreateDirectory(SteamCmdPath);
+
+                if (steamCmdPackage.IsZip)
+                    ZipFile.ExtractToDirectory(steamCmdArchivePath, SteamCmdPath, true);
+                else
+                    ExtractTarGzToDirectory(steamCmdArchivePath, SteamCmdPath);
+
+                EnsureSteamCmdIsExecutable(steamCmdExecutable);
+
                 Console.WriteLine("Installing SteamCMD...");
-                RunCommand(Path.Combine(SteamCmdPath, GetSteamCmdExecutableName()), "+quit", false);
+                RunCommand(steamCmdExecutable, "+quit", false);
             }
 
-            if (File.Exists($"./{steamCMDName}"))
+            EnsureSteamCmdIsExecutable(steamCmdExecutable);
+
+            if (File.Exists(steamCmdArchivePath))
             {
-                File.Delete($"./{steamCMDName}");
+                File.Delete(steamCmdArchivePath);
             }
         }
+
+        private static void EnsureSteamCmdIsExecutable(string steamCMDExecutable)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+
+            var mode = File.GetUnixFileMode(steamCMDExecutable);
+            File.SetUnixFileMode(steamCMDExecutable, mode | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+        }
+
+        private static void ExtractTarGzToDirectory(string archivePath, string destinationDirectory)
+        {
+            using var archiveStream = File.OpenRead(archivePath);
+            using var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress);
+            TarFile.ExtractToDirectory(gzipStream, destinationDirectory, true);
+        }
         
-        static void DownloadFile(string url, string fileName)
+        static void DownloadFile(string url, string filePath)
         {
             using HttpClient client = new HttpClient();
             using HttpResponseMessage response = client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).Result;
             response.EnsureSuccessStatusCode();
 
             using Stream stream = response.Content.ReadAsStream();
-            using FileStream fileStream = new FileStream($"./{fileName}", FileMode.Create, FileAccess.Write, FileShare.None);
+            using FileStream fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
             stream.CopyTo(fileStream);
         }
     }
