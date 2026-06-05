@@ -47,16 +47,17 @@ namespace Quaver.Steam.Deploy
         {
             Directory.SetCurrentDirectory(CurrentDirectory);
             Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
-            SetupSteamCMD();
-            CleanUp();
-            GameVersion();
-            Branch();
-            CloneProject();
+            //SetupSteamCMD();
+            //CleanUp();
+            //GameVersion();
+            //Branch();
+            //CloneProject();
             BuildProject();
-            ObfuscateClient();
-            HashProject();
-            SubmitHashes();
-            Deploy();
+            //ObfuscateClient();
+            MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
+            //HashProject();
+            //SubmitHashes();
+            //Deploy();
 
             // Avoid closing console
             Console.WriteLine("Press any key to close");

@@ -1,7 +1,7 @@
 "DepotBuildConfig"
 {
 	"DepotID" "980612"
-	"ContentRoot" "..\\build\\content-osx-x64"
+	"ContentRoot" "..\\build\\content-osx"
 	"FileMapping"
 	{
 		"LocalPath" "*"
