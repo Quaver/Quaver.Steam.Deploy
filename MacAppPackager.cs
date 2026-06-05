@@ -46,7 +46,7 @@ internal static class MacAppPackager
         var iconFileName = CopyAppIcon(resourcesPath, currentDirectory, sourceCodePath, configuration);
 
         var launcherPath = Path.Combine(macOsPath, "Quaver");
-        File.WriteAllText(launcherPath, CreateLauncherScript());
+        CreateAppLauncher(launcherPath, macOsPath, currentDirectory);
         RunCommand("chmod", new[] { "+x", launcherPath }, currentDirectory);
         RunCommand("chmod", new[] { "+x", executablePath }, currentDirectory);
         RunCommand("chmod", new[] { "+x", executableBinaryPath }, currentDirectory);
@@ -56,25 +56,106 @@ internal static class MacAppPackager
         Console.WriteLine($"Created universal macOS build at {macAppBuildPath}");
     }
 
-    private static string CreateLauncherScript()
+    private static void CreateAppLauncher(string launcherPath, string buildDirectory, string currentDirectory)
+    {
+        var sourcePath = Path.Combine(buildDirectory, "QuaverLauncher.m");
+        File.WriteAllText(sourcePath, CreateAppLauncherSource());
+
+        RunCommand("xcrun", new[]
+        {
+            "clang",
+            "-fobjc-arc",
+            "-framework",
+            "Cocoa",
+            "-mmacosx-version-min=10.15",
+            "-arch",
+            "x86_64",
+            "-arch",
+            "arm64",
+            sourcePath,
+            "-o",
+            launcherPath
+        }, currentDirectory);
+
+        File.Delete(sourcePath);
+    }
+
+    private static string CreateAppLauncherSource()
     {
         return """
-               #!/bin/sh
-               set -e
+               #import <Cocoa/Cocoa.h>
 
-               SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-               CONTENTS_DIR="$(dirname "$SCRIPT_DIR")"
-               APP_DIR="$(dirname "$CONTENTS_DIR")"
-               INSTALL_DIR="$(dirname "$APP_DIR")"
+               @interface QuaverAppDelegate : NSObject <NSApplicationDelegate>
+               @property(nonatomic) BOOL launchedGame;
+               @end
 
-               cd "$INSTALL_DIR"
-               export QUAVER_INSTALL_DIR="$INSTALL_DIR"
+               @implementation QuaverAppDelegate
 
-               if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
-                   exec /usr/bin/arch -arm64 "$INSTALL_DIR/Quaver.bin" "$@"
-               fi
+               - (NSString *)installDirectory {
+                   NSURL *bundleURL = [[NSBundle mainBundle] bundleURL];
+                   return [[[bundleURL URLByDeletingLastPathComponent] path] stringByStandardizingPath];
+               }
 
-               exec "$INSTALL_DIR/Quaver.bin" "$@"
+               - (void)launchQuaverWithArguments:(NSArray<NSString *> *)arguments {
+                   NSString *installDirectory = [self installDirectory];
+                   NSString *binaryPath = [installDirectory stringByAppendingPathComponent:@"Quaver.bin"];
+
+                   NSTask *task = [[NSTask alloc] init];
+                   task.executableURL = [NSURL fileURLWithPath:binaryPath];
+                   task.currentDirectoryURL = [NSURL fileURLWithPath:installDirectory isDirectory:YES];
+                   task.arguments = arguments ?: @[];
+
+                   NSMutableDictionary *environment = [[[NSProcessInfo processInfo] environment] mutableCopy];
+                   environment[@"QUAVER_INSTALL_DIR"] = installDirectory;
+                   task.environment = environment;
+
+                   NSError *error = nil;
+                   if (![task launchAndReturnError:&error]) {
+                       NSLog(@"Failed to launch Quaver.bin: %@", error);
+                   }
+
+                   self.launchedGame = YES;
+               }
+
+               - (void)applicationDidFinishLaunching:(NSNotification *)notification {
+                   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                       if (!self.launchedGame) {
+                           [self launchQuaverWithArguments:@[]];
+                       }
+
+                       [NSApp terminate:nil];
+                   });
+               }
+
+               - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
+                   NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithCapacity:urls.count];
+
+                   for (NSURL *url in urls) {
+                       [arguments addObject:url.absoluteString];
+                   }
+
+                   [self launchQuaverWithArguments:arguments];
+                   [NSApp terminate:nil];
+               }
+
+               - (BOOL)application:(NSApplication *)sender openFile:(NSString *)filename {
+                   [self launchQuaverWithArguments:@[filename]];
+                   [NSApp terminate:nil];
+                   return YES;
+               }
+
+               @end
+
+               int main(int argc, const char * argv[]) {
+                   @autoreleasepool {
+                       NSApplication *application = [NSApplication sharedApplication];
+                       QuaverAppDelegate *delegate = [[QuaverAppDelegate alloc] init];
+                       application.delegate = delegate;
+                       [application run];
+                   }
+
+                   return 0;
+               }
                """;
     }
 
@@ -155,6 +236,7 @@ internal static class MacAppPackager
             new XElement("array",
                 new XElement("dict",
                     PlistKeyValue("CFBundleURLName", "Quaver URL"),
+                    PlistKeyValue("CFBundleURLRole", "Viewer"),
                     new XElement("key", "CFBundleURLSchemes"),
                     new XElement("array", new XElement("string", "quaver"))))
         };
