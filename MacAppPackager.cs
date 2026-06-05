@@ -16,41 +16,44 @@ internal static class MacAppPackager
 
     internal static void Package(string currentDirectory, string compiledBuildPath, string sourceCodePath, string version, Config configuration)
     {
-        Console.WriteLine("Creating macOS app bundle...");
+        Console.WriteLine("Creating universal macOS build...");
+
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            throw new PlatformNotSupportedException("Universal macOS packaging requires lipo and must be run on macOS.");
 
         var macAppBuildPath = Path.Combine(compiledBuildPath, "content-osx");
         DeleteAndCreate(macAppBuildPath);
+
+        var x64BuildPath = Path.Combine(compiledBuildPath, "content-osx-x64");
+        var arm64BuildPath = Path.Combine(compiledBuildPath, "content-osx-arm64");
+
+        CopyDirectory(arm64BuildPath, macAppBuildPath);
+        CreateUniversalMachOBinaries(x64BuildPath, arm64BuildPath, macAppBuildPath, currentDirectory);
+
+        var executablePath = Path.Combine(macAppBuildPath, "Quaver");
+        var executableBinaryPath = Path.Combine(macAppBuildPath, "Quaver.bin");
+        File.Move(executablePath, executableBinaryPath, true);
+        File.WriteAllText(executablePath, CreateRootLauncherScript());
 
         var appPath = Path.Combine(macAppBuildPath, AppName);
         var contentsPath = Path.Combine(appPath, "Contents");
         var macOsPath = Path.Combine(contentsPath, "MacOS");
         var resourcesPath = Path.Combine(contentsPath, "Resources");
-        var x64PayloadPath = Path.Combine(resourcesPath, "osx-x64");
-        var arm64PayloadPath = Path.Combine(resourcesPath, "osx-arm64");
 
         Directory.CreateDirectory(macOsPath);
         Directory.CreateDirectory(resourcesPath);
-
-        CopyDirectory(Path.Combine(compiledBuildPath, "content-osx-x64"), x64PayloadPath);
-        CopyDirectory(Path.Combine(compiledBuildPath, "content-osx-arm64"), arm64PayloadPath);
 
         var iconFileName = CopyAppIcon(resourcesPath, currentDirectory, sourceCodePath, configuration);
 
         var launcherPath = Path.Combine(macOsPath, "Quaver");
         File.WriteAllText(launcherPath, CreateLauncherScript());
-
-        var compatibilityLauncherPath = Path.Combine(macAppBuildPath, "Quaver");
-        File.WriteAllText(compatibilityLauncherPath, CreateCompatibilityLauncherScript());
-
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            RunCommand("chmod", new[] { "+x", launcherPath }, currentDirectory);
-            RunCommand("chmod", new[] { "+x", compatibilityLauncherPath }, currentDirectory);
-        }
+        RunCommand("chmod", new[] { "+x", launcherPath }, currentDirectory);
+        RunCommand("chmod", new[] { "+x", executablePath }, currentDirectory);
+        RunCommand("chmod", new[] { "+x", executableBinaryPath }, currentDirectory);
 
         File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName));
 
-        Console.WriteLine($"Created macOS app bundle at {appPath}");
+        Console.WriteLine($"Created universal macOS build at {macAppBuildPath}");
     }
 
     private static string CreateLauncherScript()
@@ -68,16 +71,14 @@ internal static class MacAppPackager
                export QUAVER_INSTALL_DIR="$INSTALL_DIR"
 
                if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
-                   PAYLOAD_DIR="$CONTENTS_DIR/Resources/osx-arm64"
-               else
-                   PAYLOAD_DIR="$CONTENTS_DIR/Resources/osx-x64"
+                   exec /usr/bin/arch -arm64 "$INSTALL_DIR/Quaver.bin" "$@"
                fi
 
-               exec "$PAYLOAD_DIR/Quaver" "$@"
+               exec "$INSTALL_DIR/Quaver.bin" "$@"
                """;
     }
 
-    private static string CreateCompatibilityLauncherScript()
+    private static string CreateRootLauncherScript()
     {
         return """
                #!/bin/sh
@@ -87,7 +88,11 @@ internal static class MacAppPackager
                cd "$INSTALL_DIR"
                export QUAVER_INSTALL_DIR="$INSTALL_DIR"
 
-               exec "$INSTALL_DIR/Quaver.app/Contents/MacOS/Quaver" "$@"
+               if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
+                   exec /usr/bin/arch -arm64 "$INSTALL_DIR/Quaver.bin" "$@"
+               fi
+
+               exec "$INSTALL_DIR/Quaver.bin" "$@"
                """;
     }
 
@@ -242,6 +247,63 @@ internal static class MacAppPackager
         }
     }
 
+    private static void CreateUniversalMachOBinaries(string x64BuildPath, string arm64BuildPath, string outputBuildPath, string currentDirectory)
+    {
+        foreach (var x64File in Directory.GetFiles(x64BuildPath, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(x64BuildPath, x64File);
+            var arm64File = Path.Combine(arm64BuildPath, relativePath);
+            var outputFile = Path.Combine(outputBuildPath, relativePath);
+
+            if (!File.Exists(arm64File) || !IsMachO(x64File, currentDirectory) || !IsMachO(arm64File, currentDirectory))
+                continue;
+
+            var x64Architectures = GetArchitectures(x64File, currentDirectory);
+            var arm64Architectures = GetArchitectures(arm64File, currentDirectory);
+
+            if (x64Architectures.SequenceEqual(arm64Architectures))
+            {
+                Console.WriteLine($"Skipping universal merge for {relativePath}; both files contain {string.Join(" ", x64Architectures)}.");
+                WarnIfNotUniversal(relativePath, x64Architectures);
+                continue;
+            }
+
+            if (x64Architectures.Intersect(arm64Architectures).Any())
+            {
+                if (relativePath.Equals("Quaver", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"Cannot create universal Quaver executable because both publishes contain overlapping architectures. x64: {string.Join(" ", x64Architectures)}, arm64: {string.Join(" ", arm64Architectures)}");
+
+                Console.WriteLine($"Skipping universal merge for {relativePath}; architectures overlap. x64: {string.Join(" ", x64Architectures)}, arm64: {string.Join(" ", arm64Architectures)}.");
+                WarnIfNotUniversal(relativePath, x64Architectures.Union(arm64Architectures).OrderBy(architecture => architecture, StringComparer.Ordinal).ToArray());
+                continue;
+            }
+
+            Console.WriteLine($"Creating universal binary: {relativePath}");
+            RunCommand("lipo", new[] { "-create", x64File, arm64File, "-output", outputFile }, currentDirectory);
+        }
+    }
+
+    private static bool IsMachO(string path, string currentDirectory)
+    {
+        var output = RunCommandWithOutput("file", new[] { path }, currentDirectory);
+        return output.Contains("Mach-O", StringComparison.Ordinal);
+    }
+
+    private static void WarnIfNotUniversal(string relativePath, string[] architectures)
+    {
+        if (!architectures.Contains("arm64") || !architectures.Contains("x86_64"))
+            Console.WriteLine($"Warning: {relativePath} is not universal after packaging. Architectures: {string.Join(" ", architectures)}.");
+    }
+
+    private static string[] GetArchitectures(string path, string currentDirectory)
+    {
+        var output = RunCommandWithOutput("lipo", new[] { "-archs", path }, currentDirectory);
+        return output
+            .Split((char[])null, StringSplitOptions.RemoveEmptyEntries)
+            .OrderBy(architecture => architecture, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private static void DeleteAndCreate(string path)
     {
         if (Directory.Exists(path))
@@ -277,5 +339,36 @@ internal static class MacAppPackager
 
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"{command} failed with exit code {process.ExitCode}: {output}");
+    }
+
+    private static string RunCommandWithOutput(string command, string[] args, string workingDirectory)
+    {
+        var processStartInfo = new ProcessStartInfo(command)
+        {
+            WorkingDirectory = workingDirectory,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+
+        foreach (var arg in args)
+            processStartInfo.ArgumentList.Add(arg);
+
+        using var process = Process.Start(processStartInfo);
+
+        if (process == null)
+            throw new InvalidOperationException($"Failed to start command: {command}");
+
+        var output = process.StandardOutput.ReadToEnd();
+        output += process.StandardError.ReadToEnd();
+
+        process.WaitForExit();
+
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"{command} failed with exit code {process.ExitCode}: {output}");
+
+        return output;
     }
 }

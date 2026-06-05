@@ -34,8 +34,8 @@ namespace Quaver.Steam.Deploy
 
         private static string[] Platforms { get; } =
         {
-            "win-x64",
-            "linux-x64",
+            // "win-x64",
+            // "linux-x64",
             "osx-x64",
             "osx-arm64",
         };
