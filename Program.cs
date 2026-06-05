@@ -49,10 +49,10 @@ namespace Quaver.Steam.Deploy
             Directory.SetCurrentDirectory(CurrentDirectory);
             Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
             SetupSteamCMD();
-            //CleanUp();
+            CleanUp();
             GameVersion();
             Branch();
-            //CloneProject();
+            CloneProject();
             BuildProject();
             //ObfuscateClient();
             MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
