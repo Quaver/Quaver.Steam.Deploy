@@ -25,6 +25,8 @@ namespace Quaver.Steam.Deploy
 
         private static string SteamCmdPath => Path.Combine(CurrentDirectory, "steamcmd");
 
+        private const double IconPaddingScale = 0.85;
+
         private static string Version { get; set; }
 
         private static string RepoBranch { get; set; }
@@ -49,16 +51,16 @@ namespace Quaver.Steam.Deploy
             Directory.SetCurrentDirectory(CurrentDirectory);
             Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
             SetupSteamCMD();
-            CleanUp();
-            GameVersion();
-            Branch();
-            CloneProject();
+            //CleanUp();
+            //GameVersion();
+            //Branch();
+            //CloneProject();
             BuildProject();
             //ObfuscateClient();
             MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
             //HashProject();
             //SubmitHashes();
-            Deploy();
+            //Deploy();
 
             // Avoid closing console
             Console.WriteLine("Press any key to close");
@@ -127,6 +129,7 @@ namespace Quaver.Steam.Deploy
             // Update project version
             // Temporary fix until we ship Monogame dll instead of submodule
             UpdateProjectVersion(ClientProjectPath, Version);
+            ReplaceClientIcons();
 
             foreach (var platform in Platforms)
             {
@@ -153,6 +156,182 @@ namespace Quaver.Steam.Deploy
             }
 
             Console.WriteLine("Successfully finished compiling for all platforms!");
+        }
+
+        private static void ReplaceClientIcons()
+        {
+            var clientDirectory = Path.GetDirectoryName(ClientProjectPath);
+
+            if (string.IsNullOrEmpty(clientDirectory) || !Directory.Exists(clientDirectory))
+                throw new DirectoryNotFoundException($"Could not find Quaver client directory: {clientDirectory}");
+
+            var iconsetPath = Path.Combine(CurrentDirectory, "Images", "Quaver.iconset");
+
+            if (!Directory.Exists(iconsetPath))
+            {
+                Console.WriteLine($"No iconset was found at {iconsetPath}. Keeping cloned Quaver client icons.");
+                return;
+            }
+
+            var paddedIconsetPath = Path.Combine(CurrentDirectory, "Images", "Quaver.padded.iconset");
+            CreatePaddedIconset(iconsetPath, paddedIconsetPath);
+            CreatePaddedIcns(paddedIconsetPath, Path.Combine(CurrentDirectory, "Images", "Quaver.padded.icns"));
+
+            var iconPngs = Directory.EnumerateFiles(paddedIconsetPath, "*.png", SearchOption.TopDirectoryOnly)
+                .OrderBy(GetIconsetImageSize)
+                .ToArray();
+
+            if (iconPngs.Length == 0)
+            {
+                Console.WriteLine($"No PNG files were found in {iconsetPath}. Keeping cloned Quaver client icons.");
+                return;
+            }
+
+            var largestIconPng = iconPngs
+                .OrderByDescending(GetIconsetImageSize)
+                .First();
+
+            var clientBmpPath = Path.Combine(clientDirectory, "Icon.bmp");
+            var convertedBmp = RunCommand("sips", new[] { "-s", "format", "bmp", largestIconPng, "--out", clientBmpPath });
+
+            if (!convertedBmp)
+                throw new InvalidOperationException($"Failed to replace Quaver client Icon.bmp from {largestIconPng}.");
+
+            var icoPngs = iconPngs
+                .Where(path => GetIconsetImageSize(path) <= 256)
+                .GroupBy(GetIconsetImageSize)
+                .Select(group => group.First())
+                .ToArray();
+
+            if (icoPngs.Length == 0)
+                throw new InvalidOperationException($"No ICO-compatible PNG files were found in {iconsetPath}.");
+
+            WriteIcoFromPngs(icoPngs, Path.Combine(clientDirectory, "Icon.ico"));
+            Console.WriteLine("Replaced Quaver client Icon.bmp and Icon.ico before publishing.");
+        }
+
+        private static void CreatePaddedIconset(string sourceIconsetPath, string paddedIconsetPath)
+        {
+            DeleteAndCreate(paddedIconsetPath);
+
+            foreach (var sourcePng in Directory.EnumerateFiles(sourceIconsetPath, "*.png", SearchOption.TopDirectoryOnly))
+            {
+                var targetPng = Path.Combine(paddedIconsetPath, Path.GetFileName(sourcePng));
+                var size = GetIconsetImageSize(sourcePng);
+
+                if (size <= 0)
+                    continue;
+
+                CreatePaddedPng(sourcePng, targetPng, size);
+            }
+        }
+
+        private static void CreatePaddedPng(string sourcePng, string targetPng, int canvasSize)
+        {
+            var scriptPath = Path.Combine(Path.GetTempPath(), "quaver-pad-icon.swift");
+            File.WriteAllText(scriptPath, """
+                                         import AppKit
+
+                                         let sourcePath = CommandLine.arguments[1]
+                                         let targetPath = CommandLine.arguments[2]
+                                         let canvasSize = Double(CommandLine.arguments[3])!
+                                         let scale = Double(CommandLine.arguments[4])!
+
+                                         guard let image = NSImage(contentsOfFile: sourcePath) else {
+                                             fatalError("Could not load source image")
+                                         }
+
+                                         let bitmap = NSBitmapImageRep(
+                                             bitmapDataPlanes: nil,
+                                             pixelsWide: Int(canvasSize),
+                                             pixelsHigh: Int(canvasSize),
+                                             bitsPerSample: 8,
+                                             samplesPerPixel: 4,
+                                             hasAlpha: true,
+                                             isPlanar: false,
+                                             colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0,
+                                             bitsPerPixel: 0)!
+
+                                         bitmap.size = NSSize(width: canvasSize, height: canvasSize)
+                                         NSGraphicsContext.saveGraphicsState()
+                                         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+                                         NSColor.clear.set()
+                                         NSRect(x: 0, y: 0, width: canvasSize, height: canvasSize).fill()
+
+                                         let imageSize = canvasSize * scale
+                                         let origin = (canvasSize - imageSize) / 2.0
+                                         image.draw(in: NSRect(x: origin, y: origin, width: imageSize, height: imageSize),
+                                                    from: NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height),
+                                                    operation: .sourceOver,
+                                                    fraction: 1.0)
+                                         NSGraphicsContext.restoreGraphicsState()
+
+                                         let data = bitmap.representation(using: .png, properties: [:])!
+                                         try data.write(to: URL(fileURLWithPath: targetPath))
+                                         """);
+
+            var succeeded = RunCommand("xcrun", new[] { "swift", scriptPath, sourcePng, targetPng, canvasSize.ToString(), IconPaddingScale.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+
+            if (!succeeded)
+                throw new InvalidOperationException($"Failed to create padded icon: {targetPng}");
+        }
+
+        private static void CreatePaddedIcns(string paddedIconsetPath, string paddedIcnsPath)
+        {
+            var succeeded = RunCommand("iconutil", new[] { "-c", "icns", paddedIconsetPath, "-o", paddedIcnsPath });
+
+            if (!succeeded)
+                throw new InvalidOperationException($"Failed to create padded macOS app icon: {paddedIcnsPath}");
+        }
+
+        private static int GetIconsetImageSize(string path)
+        {
+            var fileName = Path.GetFileNameWithoutExtension(path);
+            var sizePart = fileName.Split('_').FirstOrDefault(part => part.Contains('x', StringComparison.OrdinalIgnoreCase));
+
+            if (string.IsNullOrEmpty(sizePart))
+                return 0;
+
+            var dimensions = sizePart.Split('x');
+
+            if (dimensions.Length == 0 || !int.TryParse(dimensions[0], out var size))
+                return 0;
+
+            return fileName.Contains("@2x", StringComparison.OrdinalIgnoreCase) ? size * 2 : size;
+        }
+
+        private static void WriteIcoFromPngs(string[] pngPaths, string outputPath)
+        {
+            using var output = new BinaryWriter(File.Create(outputPath));
+            output.Write((ushort)0);
+            output.Write((ushort)1);
+            output.Write((ushort)pngPaths.Length);
+
+            var imageOffset = 6 + pngPaths.Length * 16;
+            var pngBytes = pngPaths
+                .Select(File.ReadAllBytes)
+                .ToArray();
+
+            for (var i = 0; i < pngPaths.Length; i++)
+            {
+                var size = GetIconsetImageSize(pngPaths[i]);
+                var icoSize = size >= 256 ? 0 : size;
+
+                output.Write((byte)icoSize);
+                output.Write((byte)icoSize);
+                output.Write((byte)0);
+                output.Write((byte)0);
+                output.Write((ushort)1);
+                output.Write((ushort)32);
+                output.Write(pngBytes[i].Length);
+                output.Write(imageOffset);
+
+                imageOffset += pngBytes[i].Length;
+            }
+
+            foreach (var png in pngBytes)
+                output.Write(png);
         }
 
         private static void ObfuscateClient()

@@ -44,6 +44,7 @@ internal static class MacAppPackager
         Directory.CreateDirectory(resourcesPath);
 
         var iconFileName = CopyAppIcon(resourcesPath, currentDirectory, sourceCodePath, configuration);
+        ReplaceRuntimeDockIcons(macAppBuildPath, currentDirectory);
 
         var launcherPath = Path.Combine(macOsPath, "Quaver");
         CreateAppLauncher(launcherPath, macOsPath, currentDirectory);
@@ -274,9 +275,7 @@ internal static class MacAppPackager
     {
         if (!string.IsNullOrWhiteSpace(configuration.MacAppIconPath))
         {
-            var configuredPath = Path.IsPathRooted(configuration.MacAppIconPath)
-                ? configuration.MacAppIconPath
-                : Path.Combine(currentDirectory, configuration.MacAppIconPath);
+            var configuredPath = ResolveRelativePath(currentDirectory, configuration.MacAppIconPath);
 
             if (File.Exists(configuredPath))
                 return configuredPath;
@@ -286,6 +285,7 @@ internal static class MacAppPackager
 
         var searchRoots = new[]
         {
+            Path.Combine(currentDirectory, "Images"),
             sourceCodePath,
             Path.Combine(sourceCodePath, "Quaver"),
             Path.Combine(sourceCodePath, "Quaver", "Assets"),
@@ -296,6 +296,11 @@ internal static class MacAppPackager
 
         foreach (var root in searchRoots.Where(Directory.Exists))
         {
+            var paddedIcon = Path.Combine(root, "Quaver.padded.icns");
+
+            if (File.Exists(paddedIcon))
+                return paddedIcon;
+
             var icon = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
                 .Where(path => extensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
                 .OrderByDescending(path => Path.GetExtension(path).Equals(".icns", StringComparison.OrdinalIgnoreCase))
@@ -307,6 +312,120 @@ internal static class MacAppPackager
         }
 
         return "";
+    }
+
+    private static string ResolveRelativePath(string currentDirectory, string path)
+    {
+        if (Path.IsPathRooted(path))
+            return path;
+
+        var outputRelativePath = Path.Combine(currentDirectory, path);
+
+        if (File.Exists(outputRelativePath))
+            return outputRelativePath;
+
+        return Path.Combine(Directory.GetCurrentDirectory(), path);
+    }
+
+    private static void ReplaceRuntimeDockIcons(string macAppBuildPath, string currentDirectory)
+    {
+        var iconImagePath = ResolveRuntimeIconImagePath(currentDirectory);
+
+        if (string.IsNullOrEmpty(iconImagePath))
+        {
+            Console.WriteLine("No runtime icon image was found in Images. Skipping icon.bmp and Icon.ico replacement.");
+            return;
+        }
+
+        ConvertAndReplaceRuntimeIcon(macAppBuildPath, currentDirectory, iconImagePath, "icon.bmp", "bmp");
+        CopyRuntimeIconIfAvailable(macAppBuildPath, currentDirectory, "Icon.ico");
+    }
+
+    private static string ResolveRuntimeIconImagePath(string currentDirectory)
+    {
+        var imagesPath = Path.Combine(currentDirectory, "Images");
+
+        if (!Directory.Exists(imagesPath))
+            return "";
+
+        var preferredFiles = new[]
+        {
+            Path.Combine(imagesPath, "dock-icon.png"),
+            Path.Combine(imagesPath, "Quaver.png")
+        };
+
+        foreach (var preferredFile in preferredFiles.Where(File.Exists))
+            return preferredFile;
+
+        var iconsetPath = Path.Combine(imagesPath, "Quaver.padded.iconset");
+
+        if (!Directory.Exists(iconsetPath))
+            iconsetPath = Path.Combine(imagesPath, "Quaver.iconset");
+
+        if (Directory.Exists(iconsetPath))
+        {
+            var iconsetPng = Directory.EnumerateFiles(iconsetPath, "*.png", SearchOption.TopDirectoryOnly)
+                .OrderByDescending(GetIconsetImageSize)
+                .FirstOrDefault();
+
+            if (iconsetPng != null)
+                return iconsetPng;
+        }
+
+        return Directory.EnumerateFiles(imagesPath, "*.png", SearchOption.TopDirectoryOnly)
+            .OrderBy(path => Path.GetFileName(path).Contains("icon", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .FirstOrDefault() ?? "";
+    }
+
+    private static int GetIconsetImageSize(string path)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(path);
+        var sizePart = fileName.Split('_').FirstOrDefault(part => part.Contains('x', StringComparison.OrdinalIgnoreCase));
+
+        if (string.IsNullOrEmpty(sizePart))
+            return 0;
+
+        var dimensions = sizePart.Split('x');
+
+        if (dimensions.Length == 0 || !int.TryParse(dimensions[0], out var size))
+            return 0;
+
+        return fileName.Contains("@2x", StringComparison.OrdinalIgnoreCase) ? size * 2 : size;
+    }
+
+    private static void ConvertAndReplaceRuntimeIcon(string macAppBuildPath, string currentDirectory, string iconImagePath, string targetFileName, string format)
+    {
+        var targetPaths = Directory.EnumerateFiles(macAppBuildPath, targetFileName, SearchOption.AllDirectories)
+            .Append(Path.Combine(macAppBuildPath, targetFileName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var targetPath in targetPaths)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? macAppBuildPath);
+            RunCommand("sips", new[] { "-s", "format", format, iconImagePath, "--out", targetPath }, currentDirectory);
+            Console.WriteLine($"Replaced macOS runtime icon: {Path.GetRelativePath(macAppBuildPath, targetPath)}");
+        }
+    }
+
+    private static void CopyRuntimeIconIfAvailable(string macAppBuildPath, string currentDirectory, string targetFileName)
+    {
+        var iconPath = Path.Combine(currentDirectory, "Images", targetFileName);
+
+        if (!File.Exists(iconPath))
+            return;
+
+        var targetPaths = Directory.EnumerateFiles(macAppBuildPath, targetFileName, SearchOption.AllDirectories)
+            .Append(Path.Combine(macAppBuildPath, targetFileName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var targetPath in targetPaths)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? macAppBuildPath);
+            File.Copy(iconPath, targetPath, true);
+            Console.WriteLine($"Replaced macOS runtime icon: {Path.GetRelativePath(macAppBuildPath, targetPath)}");
+        }
     }
 
     private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
