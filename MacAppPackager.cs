@@ -31,9 +31,6 @@ internal static class MacAppPackager
         CreateUniversalMachOBinaries(x64BuildPath, arm64BuildPath, macAppBuildPath, currentDirectory);
 
         var executablePath = Path.Combine(macAppBuildPath, "Quaver");
-        var executableBinaryPath = Path.Combine(macAppBuildPath, "Quaver.bin");
-        File.Move(executablePath, executableBinaryPath, true);
-        File.WriteAllText(executablePath, CreateRootLauncherScript());
 
         var appPath = Path.Combine(macAppBuildPath, AppName);
         var contentsPath = Path.Combine(appPath, "Contents");
@@ -50,7 +47,6 @@ internal static class MacAppPackager
         CreateAppLauncher(launcherPath, macOsPath, currentDirectory);
         RunCommand("chmod", new[] { "+x", launcherPath }, currentDirectory);
         RunCommand("chmod", new[] { "+x", executablePath }, currentDirectory);
-        RunCommand("chmod", new[] { "+x", executableBinaryPath }, currentDirectory);
 
         File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName));
 
@@ -108,6 +104,7 @@ internal static class MacAppPackager
 
                    NSMutableDictionary *environment = [[[NSProcessInfo processInfo] environment] mutableCopy];
                    environment[@"QUAVER_INSTALL_DIR"] = installDirectory;
+                   environment[@"SDL_APP_NAME"] = @"Quaver";
                    task.environment = environment;
 
                    NSError *error = nil;
@@ -132,7 +129,7 @@ internal static class MacAppPackager
                    NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithCapacity:urls.count];
 
                    for (NSURL *url in urls) {
-                       [arguments addObject:url.absoluteString];
+                       [arguments addObject:url.isFileURL ? url.path : url.absoluteString];
                    }
 
                    [self launchQuaverWithArguments:arguments];
@@ -160,24 +157,6 @@ internal static class MacAppPackager
                """;
     }
 
-    private static string CreateRootLauncherScript()
-    {
-        return """
-               #!/bin/sh
-               set -e
-
-               INSTALL_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-               cd "$INSTALL_DIR"
-               export QUAVER_INSTALL_DIR="$INSTALL_DIR"
-
-               if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
-                   exec /usr/bin/arch -arm64 "$INSTALL_DIR/Quaver.bin" "$@"
-               fi
-
-               exec "$INSTALL_DIR/Quaver.bin" "$@"
-               """;
-    }
-
     private static string CreateInfoPlist(string version, string iconFileName)
     {
         var plist = new XDocument(
@@ -197,7 +176,8 @@ internal static class MacAppPackager
                     PlistKeyValue("LSMinimumSystemVersion", "10.15"),
                     PlistKeyValue("NSHighResolutionCapable", true),
                     CreateUrlTypes(),
-                    CreateDocumentTypes()
+                    CreateDocumentTypes(iconFileName),
+                    CreateExportedTypeDeclarations(iconFileName)
                 )
             )
         );
@@ -218,14 +198,27 @@ internal static class MacAppPackager
         return new object[] { new XElement("key", key), new XElement(value ? "true" : "false") };
     }
 
-    private static object[] CreateDocumentTypes()
+    private static object[] CreateDocumentTypes(string iconFileName)
     {
         return new object[]
         {
             new XElement("key", "CFBundleDocumentTypes"),
             new XElement("array",
-                CreateDocumentType("Quaver Package", "qp", "com.quavergame.package"),
-                CreateDocumentType("Quaver Skin", "qs", "com.quavergame.skin"))
+                CreateDocumentType("Quaver Package", "qp", "com.quavergame.package", iconFileName),
+                CreateDocumentType("Quaver Skin", "qs", "com.quavergame.skin", iconFileName),
+                CreateDocumentType("Quaver Playlist", "qpl", "com.quavergame.playlist", iconFileName))
+        };
+    }
+
+    private static object[] CreateExportedTypeDeclarations(string iconFileName)
+    {
+        return new object[]
+        {
+            new XElement("key", "UTExportedTypeDeclarations"),
+            new XElement("array",
+                CreateExportedTypeDeclaration("Quaver Package", "qp", "com.quavergame.package", iconFileName),
+                CreateExportedTypeDeclaration("Quaver Skin", "qs", "com.quavergame.skin", iconFileName),
+                CreateExportedTypeDeclaration("Quaver Playlist", "qpl", "com.quavergame.playlist", iconFileName))
         };
     }
 
@@ -243,15 +236,39 @@ internal static class MacAppPackager
         };
     }
 
-    private static XElement CreateDocumentType(string name, string extension, string uti)
+    private static XElement CreateDocumentType(string name, string extension, string uti, string iconFileName)
     {
-        return new XElement("dict",
+        var documentType = new XElement("dict",
             PlistKeyValue("CFBundleTypeName", name),
             new XElement("key", "CFBundleTypeExtensions"),
             new XElement("array", new XElement("string", extension)),
             PlistKeyValue("CFBundleTypeRole", "Viewer"),
+            PlistKeyValue("LSHandlerRank", "Owner"),
             new XElement("key", "LSItemContentTypes"),
             new XElement("array", new XElement("string", uti)));
+
+        if (!string.IsNullOrEmpty(iconFileName))
+            documentType.Add(PlistKeyValue("CFBundleTypeIconFile", iconFileName));
+
+        return documentType;
+    }
+
+    private static XElement CreateExportedTypeDeclaration(string description, string extension, string uti, string iconFileName)
+    {
+        var typeDeclaration = new XElement("dict",
+            PlistKeyValue("UTTypeIdentifier", uti),
+            PlistKeyValue("UTTypeDescription", description),
+            new XElement("key", "UTTypeConformsTo"),
+            new XElement("array", new XElement("string", "public.data")),
+            new XElement("key", "UTTypeTagSpecification"),
+            new XElement("dict",
+                new XElement("key", "public.filename-extension"),
+                new XElement("array", new XElement("string", extension))));
+
+        if (!string.IsNullOrEmpty(iconFileName))
+            typeDeclaration.Add(PlistKeyValue("UTTypeIconFile", iconFileName));
+
+        return typeDeclaration;
     }
 
     private static string CopyAppIcon(string resourcesPath, string currentDirectory, string sourceCodePath, Config configuration)
