@@ -51,7 +51,16 @@ internal static class MacAppPackager
 
         File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName, documentIconFileName));
 
+        DeleteDirectoryIfExists(x64BuildPath);
+        DeleteDirectoryIfExists(arm64BuildPath);
+
         Console.WriteLine($"Created universal macOS build at {macAppBuildPath}");
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        if (Directory.Exists(path))
+            Directory.Delete(path, true);
     }
 
     private static void CreateAppLauncher(string launcherPath, string buildDirectory, string currentDirectory)

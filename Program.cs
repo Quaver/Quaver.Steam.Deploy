@@ -43,6 +43,13 @@ namespace Quaver.Steam.Deploy
             "osx-arm64",
         };
 
+        private static string[] DeployPlatforms { get; } =
+        {
+            "win-x64",
+            "linux-x64",
+            "osx"
+        };
+
         /// <summary>
         /// </summary>
         /// <param name="args"></param>
@@ -51,16 +58,16 @@ namespace Quaver.Steam.Deploy
             Directory.SetCurrentDirectory(CurrentDirectory);
             Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
             SetupSteamCMD();
-            //CleanUp();
-            //GameVersion();
-            //Branch();
-            //CloneProject();
+            // CleanUp();
+            GameVersion();
+            // Branch();
+            // CloneProject();
             BuildProject();
-            //ObfuscateClient();
             MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
-            //HashProject();
-            //SubmitHashes();
-            //Deploy();
+            ObfuscateClient();
+            HashProject();
+            SubmitHashes();
+            Deploy();
 
             // Avoid closing console
             Console.WriteLine("Press any key to close");
@@ -129,7 +136,7 @@ namespace Quaver.Steam.Deploy
             // Update project version
             // Temporary fix until we ship Monogame dll instead of submodule
             UpdateProjectVersion(ClientProjectPath, Version);
-            ReplaceClientIcons();
+            PrepareMacAppIcons();
 
             foreach (var platform in Platforms)
             {
@@ -158,56 +165,20 @@ namespace Quaver.Steam.Deploy
             Console.WriteLine("Successfully finished compiling for all platforms!");
         }
 
-        private static void ReplaceClientIcons()
+        private static void PrepareMacAppIcons()
         {
-            var clientDirectory = Path.GetDirectoryName(ClientProjectPath);
-
-            if (string.IsNullOrEmpty(clientDirectory) || !Directory.Exists(clientDirectory))
-                throw new DirectoryNotFoundException($"Could not find Quaver client directory: {clientDirectory}");
-
             var iconsetPath = Path.Combine(CurrentDirectory, "Images", "Quaver.iconset");
 
             if (!Directory.Exists(iconsetPath))
             {
-                Console.WriteLine($"No iconset was found at {iconsetPath}. Keeping cloned Quaver client icons.");
+                Console.WriteLine($"No iconset was found at {iconsetPath}. Skipping macOS app icon preparation.");
                 return;
             }
 
             var paddedIconsetPath = Path.Combine(CurrentDirectory, "Images", "Quaver.padded.iconset");
             CreatePaddedIconset(iconsetPath, paddedIconsetPath);
             CreatePaddedIcns(paddedIconsetPath, Path.Combine(CurrentDirectory, "Images", "Quaver.padded.icns"));
-
-            var iconPngs = Directory.EnumerateFiles(paddedIconsetPath, "*.png", SearchOption.TopDirectoryOnly)
-                .OrderBy(GetIconsetImageSize)
-                .ToArray();
-
-            if (iconPngs.Length == 0)
-            {
-                Console.WriteLine($"No PNG files were found in {iconsetPath}. Keeping cloned Quaver client icons.");
-                return;
-            }
-
-            var largestIconPng = iconPngs
-                .OrderByDescending(GetIconsetImageSize)
-                .First();
-
-            var clientBmpPath = Path.Combine(clientDirectory, "Icon.bmp");
-            var convertedBmp = RunCommand("sips", new[] { "-s", "format", "bmp", largestIconPng, "--out", clientBmpPath });
-
-            if (!convertedBmp)
-                throw new InvalidOperationException($"Failed to replace Quaver client Icon.bmp from {largestIconPng}.");
-
-            var icoPngs = iconPngs
-                .Where(path => GetIconsetImageSize(path) <= 256)
-                .GroupBy(GetIconsetImageSize)
-                .Select(group => group.First())
-                .ToArray();
-
-            if (icoPngs.Length == 0)
-                throw new InvalidOperationException($"No ICO-compatible PNG files were found in {iconsetPath}.");
-
-            WriteIcoFromPngs(icoPngs, Path.Combine(clientDirectory, "Icon.ico"));
-            Console.WriteLine("Replaced Quaver client Icon.bmp and Icon.ico before publishing.");
+            Console.WriteLine("Prepared padded macOS app icons.");
         }
 
         private static void CreatePaddedIconset(string sourceIconsetPath, string paddedIconsetPath)
@@ -343,7 +314,7 @@ namespace Quaver.Steam.Deploy
             }
             
             Console.WriteLine("Starting obfuscating client");
-            // Run .NET Reactor for win-x64
+            // Run .NET Reactor for win-x64, then reuse the protected Server.Client assembly.
             var contentPath = Path.Combine(CompiledBuildPath, "content-win-x64");
 
             var commandline =
@@ -353,18 +324,39 @@ namespace Quaver.Steam.Deploy
 
             var quaverServerClient = Path.Combine(contentPath, "Quaver.Server.Client_Secure", "Quaver.Server.Client.dll");
 
-            foreach (var platform in Platforms)
+            foreach (var platform in DeployPlatforms)
             {
                 var path = Path.Combine(CompiledBuildPath, $"content-{platform}");
                 File.Copy(quaverServerClient, Path.Combine(path, "Quaver.Server.Client.dll"), true);
             }
+
+            DeleteFileIfExists(Path.Combine(contentPath, "Quaver.Server.Client.pdb"));
+            DeleteReactorOutputFolders(contentPath);
             
             Console.WriteLine("Finished obfuscating");
         }
 
+        private static void DeleteReactorOutputFolders(string contentPath)
+        {
+            DeleteDirectoryIfExists(Path.Combine(contentPath, "Quaver_Secure"));
+            DeleteDirectoryIfExists(Path.Combine(contentPath, "Quaver.Server.Client_Secure"));
+        }
+
+        private static void DeleteDirectoryIfExists(string path)
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, true);
+        }
+
+        private static void DeleteFileIfExists(string path)
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+
         private static void HashProject()
         {
-            foreach (var platform in Platforms)
+            foreach (var platform in DeployPlatforms)
             {
                 var gameBuild = new GameBuild
                 {
@@ -420,20 +412,6 @@ namespace Quaver.Steam.Deploy
             
             Console.Write("Enter Steam Two Factor Authentication Code: ");
             var code = Console.ReadLine();
-            
-            // Delete the reactor folders
-            string contentPath = Path.Combine(CompiledBuildPath, "content-win-x64");
-
-            if (Directory.Exists(Path.Combine(contentPath, "Quaver_Secure")))
-            {
-                Directory.Delete(Path.Combine(contentPath, "Quaver_Secure"), true);
-            }
-
-            if (Directory.Exists(Path.Combine(contentPath, "Quaver.Server.Client_Secure")))
-            {
-                Directory.Delete(Path.Combine(contentPath, "Quaver.Server.Client_Secure"), true);
-            }
-
             Console.WriteLine("Deploying to Steam...");
             
             // Deploy to Steam
