@@ -41,6 +41,7 @@ internal static class MacAppPackager
         Directory.CreateDirectory(resourcesPath);
 
         var iconFileName = CopyAppIcon(resourcesPath, currentDirectory, sourceCodePath, configuration);
+        var documentIconFileName = CopyDocumentIcon(resourcesPath, currentDirectory, sourceCodePath, configuration, iconFileName);
         ReplaceRuntimeDockIcons(macAppBuildPath, currentDirectory);
 
         var launcherPath = Path.Combine(macOsPath, "Quaver");
@@ -48,7 +49,7 @@ internal static class MacAppPackager
         RunCommand("chmod", new[] { "+x", launcherPath }, currentDirectory);
         RunCommand("chmod", new[] { "+x", executablePath }, currentDirectory);
 
-        File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName));
+        File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName, documentIconFileName));
 
         Console.WriteLine($"Created universal macOS build at {macAppBuildPath}");
     }
@@ -157,7 +158,7 @@ internal static class MacAppPackager
                """;
     }
 
-    private static string CreateInfoPlist(string version, string iconFileName)
+    private static string CreateInfoPlist(string version, string iconFileName, string documentIconFileName)
     {
         var plist = new XDocument(
             new XDeclaration("1.0", "UTF-8", null),
@@ -176,8 +177,8 @@ internal static class MacAppPackager
                     PlistKeyValue("LSMinimumSystemVersion", "10.15"),
                     PlistKeyValue("NSHighResolutionCapable", true),
                     CreateUrlTypes(),
-                    CreateDocumentTypes(iconFileName),
-                    CreateExportedTypeDeclarations(iconFileName)
+                    CreateDocumentTypes(documentIconFileName),
+                    CreateExportedTypeDeclarations(documentIconFileName)
                 )
             )
         );
@@ -283,6 +284,24 @@ internal static class MacAppPackager
 
         var extension = Path.GetExtension(iconPath).ToLowerInvariant();
         var iconFileName = extension == ".icns" ? "Quaver.icns" : $"QuaverIcon{extension}";
+        File.Copy(iconPath, Path.Combine(resourcesPath, iconFileName), true);
+
+        return iconFileName;
+    }
+
+    private static string CopyDocumentIcon(string resourcesPath, string currentDirectory, string sourceCodePath, Config configuration, string appIconFileName)
+    {
+        var iconPath = ResolveAppIconPath(currentDirectory, sourceCodePath, configuration);
+
+        if (string.IsNullOrEmpty(iconPath))
+            return "";
+
+        var extension = Path.GetExtension(iconPath).ToLowerInvariant();
+        var iconFileName = extension == ".icns" ? "QuaverDocument.icns" : $"QuaverDocument{extension}";
+
+        if (iconFileName.Equals(appIconFileName, StringComparison.OrdinalIgnoreCase))
+            iconFileName = $"Document{iconFileName}";
+
         File.Copy(iconPath, Path.Combine(resourcesPath, iconFileName), true);
 
         return iconFileName;
