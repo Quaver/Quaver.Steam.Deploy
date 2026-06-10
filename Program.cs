@@ -58,10 +58,10 @@ namespace Quaver.Steam.Deploy
             Directory.SetCurrentDirectory(CurrentDirectory);
             Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
             SetupSteamCMD();
-            // CleanUp();
+            CleanUp();
             GameVersion();
-            // Branch();
-            // CloneProject();
+            Branch();
+            CloneProject();
             BuildProject();
             MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
             ObfuscateClient();
@@ -314,23 +314,26 @@ namespace Quaver.Steam.Deploy
             }
             
             Console.WriteLine("Starting obfuscating client");
-            // Run .NET Reactor for win-x64, then reuse the protected Server.Client assembly.
-            var contentPath = Path.Combine(CompiledBuildPath, "content-win-x64");
+            var contentPath = Path.Combine(CompiledBuildPath, "content-osx");
+            var quaverDll = Path.Combine(contentPath, "Quaver.dll");
+            var quaverServerClientDll = Path.Combine(contentPath, "Quaver.Server.Client.dll");
 
             var commandline =
-                $"-licensed -file {Path.Combine(contentPath, "Quaver.dll")} -files {Path.Combine(contentPath, "Quaver.Server.Client.dll")} -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
+                $"-licensed -file {quaverDll} -files {quaverServerClientDll} -antitamp 1 -anti_debug 1 -hide_calls 1 -control_flow 1 -flow_level 9 -mapping_file 1";
 
-            RunCommand(Configuration.NetReactor, commandline);
+            if (!RunCommand(Configuration.NetReactor, commandline))
+                throw new InvalidOperationException("Failed to obfuscate client for osx. See the .NET Reactor output above.");
 
-            var quaverServerClient = Path.Combine(contentPath, "Quaver.Server.Client_Secure", "Quaver.Server.Client.dll");
+            var protectedQuaverServerClientDll =
+                Path.Combine(contentPath, "Quaver.Server.Client_Secure", "Quaver.Server.Client.dll");
 
             foreach (var platform in DeployPlatforms)
             {
-                var path = Path.Combine(CompiledBuildPath, $"content-{platform}");
-                File.Copy(quaverServerClient, Path.Combine(path, "Quaver.Server.Client.dll"), true);
+                var platformContentPath = Path.Combine(CompiledBuildPath, $"content-{platform}");
+                File.Copy(protectedQuaverServerClientDll, Path.Combine(platformContentPath, "Quaver.Server.Client.dll"), true);
+                DeleteFileIfExists(Path.Combine(platformContentPath, "Quaver.Server.Client.pdb"));
             }
 
-            DeleteFileIfExists(Path.Combine(contentPath, "Quaver.Server.Client.pdb"));
             DeleteReactorOutputFolders(contentPath);
             
             Console.WriteLine("Finished obfuscating");
