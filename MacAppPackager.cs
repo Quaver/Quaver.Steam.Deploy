@@ -169,6 +169,9 @@ internal static class MacAppPackager
 
     private static string CreateInfoPlist(string version, string iconFileName, string documentIconFileName)
     {
+        var plistAppIconName = GetPlistIconName(iconFileName);
+        var plistDocumentIconName = GetPlistIconName(documentIconFileName);
+
         var plist = new XDocument(
             new XDeclaration("1.0", "UTF-8", null),
             new XDocumentType("plist", "-//Apple//DTD PLIST 1.0//EN", "http://www.apple.com/DTDs/PropertyList-1.0.dtd", null),
@@ -186,16 +189,24 @@ internal static class MacAppPackager
                     PlistKeyValue("LSMinimumSystemVersion", "10.15"),
                     PlistKeyValue("NSHighResolutionCapable", true),
                     CreateUrlTypes(),
-                    CreateDocumentTypes(documentIconFileName),
-                    CreateExportedTypeDeclarations(documentIconFileName)
+                    CreateDocumentTypes(plistDocumentIconName),
+                    CreateExportedTypeDeclarations(plistDocumentIconName)
                 )
             )
         );
 
-        if (!string.IsNullOrEmpty(iconFileName))
-            plist.Root?.Element("dict")?.AddFirst(PlistKeyValue("CFBundleIconFile", iconFileName));
+        if (!string.IsNullOrEmpty(plistAppIconName))
+            plist.Root?.Element("dict")?.AddFirst(PlistKeyValue("CFBundleIconFile", plistAppIconName));
 
         return plist.ToString();
+    }
+
+    private static string GetPlistIconName(string iconFileName)
+    {
+        if (string.IsNullOrWhiteSpace(iconFileName))
+            return "";
+
+        return Path.GetFileNameWithoutExtension(iconFileName);
     }
 
     private static object[] PlistKeyValue(string key, string value)
