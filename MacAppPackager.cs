@@ -40,6 +40,7 @@ internal static class MacAppPackager
         Directory.CreateDirectory(macOsPath);
         Directory.CreateDirectory(resourcesPath);
 
+        var iconName = CopyIconComposerAppIcon(resourcesPath, currentDirectory, configuration);
         var iconFileName = CopyAppIcon(resourcesPath, currentDirectory, sourceCodePath, configuration);
         var documentIconFileName = CopyDocumentIcon(resourcesPath, currentDirectory, sourceCodePath, configuration, iconFileName);
         ReplaceRuntimeDockIcons(macAppBuildPath, currentDirectory);
@@ -49,7 +50,7 @@ internal static class MacAppPackager
         RunCommand("chmod", new[] { "+x", launcherPath }, currentDirectory);
         RunCommand("chmod", new[] { "+x", executablePath }, currentDirectory);
 
-        File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName, documentIconFileName));
+        File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName, iconName, documentIconFileName));
 
         DeleteDirectoryIfExists(x64BuildPath);
         DeleteDirectoryIfExists(arm64BuildPath);
@@ -167,7 +168,7 @@ internal static class MacAppPackager
                """;
     }
 
-    private static string CreateInfoPlist(string version, string iconFileName, string documentIconFileName)
+    private static string CreateInfoPlist(string version, string iconFileName, string iconName, string documentIconFileName)
     {
         var plistAppIconName = GetPlistIconName(iconFileName);
         var plistDocumentIconName = GetPlistIconName(documentIconFileName);
@@ -197,6 +198,9 @@ internal static class MacAppPackager
 
         if (!string.IsNullOrEmpty(plistAppIconName))
             plist.Root?.Element("dict")?.AddFirst(PlistKeyValue("CFBundleIconFile", plistAppIconName));
+
+        if (!string.IsNullOrEmpty(iconName))
+            plist.Root?.Element("dict")?.AddFirst(PlistKeyValue("CFBundleIconName", iconName));
 
         return plist.ToString();
     }
@@ -292,6 +296,21 @@ internal static class MacAppPackager
         return typeDeclaration;
     }
 
+    private static string CopyIconComposerAppIcon(string resourcesPath, string currentDirectory, Config configuration)
+    {
+        var iconPath = ResolveIconComposerAppIconPath(currentDirectory, configuration);
+
+        if (string.IsNullOrEmpty(iconPath))
+            return "";
+
+        var iconFileName = Path.GetFileName(iconPath);
+        var iconName = Path.GetFileNameWithoutExtension(iconPath);
+        CopyDirectory(iconPath, Path.Combine(resourcesPath, iconFileName));
+        Console.WriteLine($"Copied macOS Icon Composer app icon: {iconFileName}");
+
+        return iconName;
+    }
+
     private static string CopyAppIcon(string resourcesPath, string currentDirectory, string sourceCodePath, Config configuration)
     {
         var iconPath = ResolveAppIconPath(currentDirectory, sourceCodePath, configuration);
@@ -325,6 +344,20 @@ internal static class MacAppPackager
         File.Copy(iconPath, Path.Combine(resourcesPath, iconFileName), true);
 
         return iconFileName;
+    }
+
+    private static string ResolveIconComposerAppIconPath(string currentDirectory, Config configuration)
+    {
+        if (!string.IsNullOrWhiteSpace(configuration.MacAppIconPath))
+        {
+            var configuredPath = ResolveRelativePath(currentDirectory, configuration.MacAppIconPath);
+
+            if (Directory.Exists(configuredPath) && Path.GetExtension(configuredPath).Equals(".icon", StringComparison.OrdinalIgnoreCase))
+                return configuredPath;
+        }
+
+        var iconPath = Path.Combine(currentDirectory, "Images", "Quaver.icon");
+        return Directory.Exists(iconPath) ? iconPath : "";
     }
 
     private static string ResolveAppIconPath(string currentDirectory, string sourceCodePath, Config configuration)
@@ -377,7 +410,7 @@ internal static class MacAppPackager
 
         var outputRelativePath = Path.Combine(currentDirectory, path);
 
-        if (File.Exists(outputRelativePath))
+        if (File.Exists(outputRelativePath) || Directory.Exists(outputRelativePath))
             return outputRelativePath;
 
         return Path.Combine(Directory.GetCurrentDirectory(), path);

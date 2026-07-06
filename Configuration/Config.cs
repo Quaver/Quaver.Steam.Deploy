@@ -52,7 +52,7 @@ namespace Quaver.Steam.Deploy.Configuration
         public bool RunReactor { get; set; }
 
         /// <summary>
-        ///     Optional path to a macOS app icon file (.icns, .png, or .ico).
+        ///     Optional path to a macOS app icon file (.icon, .icns, .png, or .ico).
         /// </summary>
         public string MacAppIconPath { get; set; } = "";
         
