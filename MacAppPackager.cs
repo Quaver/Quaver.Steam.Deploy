@@ -52,7 +52,7 @@ internal static class MacAppPackager
 
         File.WriteAllText(Path.Combine(contentsPath, "Info.plist"), CreateInfoPlist(version, iconFileName, iconName, documentIconFileName));
 
-        DeleteDirectoryIfExists(x64BuildPath);
+        // DeleteDirectoryIfExists(x64BuildPath);
         DeleteDirectoryIfExists(arm64BuildPath);
 
         Console.WriteLine($"Created universal macOS build at {macAppBuildPath}");
