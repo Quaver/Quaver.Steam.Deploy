@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Formats.Tar;
 using Quaver.Steam.Deploy.Configuration;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Xml.Linq;
 
@@ -13,13 +15,17 @@ namespace Quaver.Steam.Deploy
 {
     internal static class Program
     {
-        private static readonly string CurrentDirectory = Directory.GetCurrentDirectory();
+        private static readonly string CurrentDirectory = AppContext.BaseDirectory;
 
-        private static string CompiledBuildPath => CurrentDirectory + "\\build";
+        private static string CompiledBuildPath => Path.Combine(CurrentDirectory, "build");
 
-        private static string SourceCodePath => CurrentDirectory + "\\quaver";
+        private static string SourceCodePath => Path.Combine(CurrentDirectory, "quaver");
 
-        private static string SteamCMDPath => CurrentDirectory + "\\steamcmd";
+        private static string ClientProjectPath => Path.Combine(SourceCodePath, "Quaver", "Quaver.csproj");
+
+        private static string SteamCmdPath => Path.Combine(CurrentDirectory, "steamcmd");
+
+        private const double IconPaddingScale = 0.85;
 
         private static string Version { get; set; }
 
@@ -34,7 +40,14 @@ namespace Quaver.Steam.Deploy
             "win-x64",
             "linux-x64",
             "osx-x64",
-            "osx-arm",
+            "osx-arm64",
+        };
+
+        private static string[] DeployPlatforms { get; } =
+        {
+            "win-x64",
+            "linux-x64",
+            "osx"
         };
 
         /// <summary>
@@ -42,13 +55,15 @@ namespace Quaver.Steam.Deploy
         /// <param name="args"></param>
         static void Main(string[] args)
         {
-            Configuration = Config.Deserialize();
+            Directory.SetCurrentDirectory(CurrentDirectory);
+            Configuration = Config.Deserialize(Path.Combine(CurrentDirectory, "config.json"));
             SetupSteamCMD();
             CleanUp();
             GameVersion();
             Branch();
             CloneProject();
             BuildProject();
+            MacAppPackager.Package(CurrentDirectory, CompiledBuildPath, SourceCodePath, Version, Configuration);
             ObfuscateClient();
             HashProject();
             SubmitHashes();
@@ -61,20 +76,21 @@ namespace Quaver.Steam.Deploy
 
         private static void CleanUp()
         {
-            // Delete cloned project
+            // Delete source code
             DeleteAndCreate(SourceCodePath);
             // Delete builds
             DeleteAndCreate(CompiledBuildPath);
             // Delete app_build.vdf
-            if (Directory.Exists($"{CurrentDirectory}\\Scripts\\app_build.vdf"))
-                Directory.Delete($"{CurrentDirectory}\\Scripts\\app_build.vdf");
+            var appBuildPath = Path.Combine(CurrentDirectory, "Scripts", "app_build.vdf");
+            if (File.Exists(appBuildPath))
+                File.Delete(appBuildPath);
         }
 
         private static void DeleteAndCreate(string path)
         {
             if (Directory.Exists(path))
             {
-                // This resolves not allowing us to delete git folder
+                // This resolves not allowing us to delete git
                 var directory = new DirectoryInfo(path) { Attributes = FileAttributes.Normal };
 
                 foreach (var info in directory.GetFileSystemInfos("*", SearchOption.AllDirectories))
@@ -118,20 +134,175 @@ namespace Quaver.Steam.Deploy
         private static void BuildProject()
         {
             // Update project version
-            // Temporary fix until we ship Monogame dll instead submodule
-            UpdateProjectVersion($"{SourceCodePath}\\Quaver\\Quaver.csproj", Version);
+            // Temporary fix until we ship Monogame dll instead of submodule
+            UpdateProjectVersion(ClientProjectPath, Version);
+            PrepareMacAppIcons();
 
             foreach (var platform in Platforms)
             {
                 Console.WriteLine($"Starting compiling {platform}!");
-                var dir = $"{CompiledBuildPath}\\content-{platform}";
+                var dir = Path.Combine(CompiledBuildPath, $"content-{platform}");
 
-                RunCommand("dotnet",
-                    $"publish {SourceCodePath} -f {Configuration.NetFramework} -r {platform} -c {Configuration.NetConfiguration} -o {dir} --self-contained",
-                    false);
+                var succeeded = RunCommand("dotnet", new[]
+                {
+                    "publish",
+                    ClientProjectPath,
+                    "-f",
+                    Configuration.NetFramework,
+                    "-r",
+                    platform,
+                    "-c",
+                    Configuration.NetConfiguration,
+                    "-o",
+                    dir,
+                    "--self-contained"
+                }, true);
+
+                if (!succeeded)
+                    throw new InvalidOperationException($"Failed to compile {platform}. See the dotnet publish output above.");
             }
 
             Console.WriteLine("Successfully finished compiling for all platforms!");
+        }
+
+        private static void PrepareMacAppIcons()
+        {
+            var iconsetPath = Path.Combine(CurrentDirectory, "Images", "Quaver.iconset");
+
+            if (!Directory.Exists(iconsetPath))
+            {
+                Console.WriteLine($"No iconset was found at {iconsetPath}. Skipping macOS app icon preparation.");
+                return;
+            }
+
+            var paddedIconsetPath = Path.Combine(CurrentDirectory, "Images", "Quaver.padded.iconset");
+            CreatePaddedIconset(iconsetPath, paddedIconsetPath);
+            CreatePaddedIcns(paddedIconsetPath, Path.Combine(CurrentDirectory, "Images", "Quaver.padded.icns"));
+            Console.WriteLine("Prepared padded macOS app icons.");
+        }
+
+        private static void CreatePaddedIconset(string sourceIconsetPath, string paddedIconsetPath)
+        {
+            DeleteAndCreate(paddedIconsetPath);
+
+            foreach (var sourcePng in Directory.EnumerateFiles(sourceIconsetPath, "*.png", SearchOption.TopDirectoryOnly))
+            {
+                var targetPng = Path.Combine(paddedIconsetPath, Path.GetFileName(sourcePng));
+                var size = GetIconsetImageSize(sourcePng);
+
+                if (size <= 0)
+                    continue;
+
+                CreatePaddedPng(sourcePng, targetPng, size);
+            }
+        }
+
+        private static void CreatePaddedPng(string sourcePng, string targetPng, int canvasSize)
+        {
+            var scriptPath = Path.Combine(Path.GetTempPath(), "quaver-pad-icon.swift");
+            File.WriteAllText(scriptPath, """
+                                         import AppKit
+
+                                         let sourcePath = CommandLine.arguments[1]
+                                         let targetPath = CommandLine.arguments[2]
+                                         let canvasSize = Double(CommandLine.arguments[3])!
+                                         let scale = Double(CommandLine.arguments[4])!
+
+                                         guard let image = NSImage(contentsOfFile: sourcePath) else {
+                                             fatalError("Could not load source image")
+                                         }
+
+                                         let bitmap = NSBitmapImageRep(
+                                             bitmapDataPlanes: nil,
+                                             pixelsWide: Int(canvasSize),
+                                             pixelsHigh: Int(canvasSize),
+                                             bitsPerSample: 8,
+                                             samplesPerPixel: 4,
+                                             hasAlpha: true,
+                                             isPlanar: false,
+                                             colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0,
+                                             bitsPerPixel: 0)!
+
+                                         bitmap.size = NSSize(width: canvasSize, height: canvasSize)
+                                         NSGraphicsContext.saveGraphicsState()
+                                         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+                                         NSColor.clear.set()
+                                         NSRect(x: 0, y: 0, width: canvasSize, height: canvasSize).fill()
+
+                                         let imageSize = canvasSize * scale
+                                         let origin = (canvasSize - imageSize) / 2.0
+                                         image.draw(in: NSRect(x: origin, y: origin, width: imageSize, height: imageSize),
+                                                    from: NSRect(x: 0, y: 0, width: image.size.width, height: image.size.height),
+                                                    operation: .sourceOver,
+                                                    fraction: 1.0)
+                                         NSGraphicsContext.restoreGraphicsState()
+
+                                         let data = bitmap.representation(using: .png, properties: [:])!
+                                         try data.write(to: URL(fileURLWithPath: targetPath))
+                                         """);
+
+            var succeeded = RunCommand("xcrun", new[] { "swift", scriptPath, sourcePng, targetPng, canvasSize.ToString(), IconPaddingScale.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+
+            if (!succeeded)
+                throw new InvalidOperationException($"Failed to create padded icon: {targetPng}");
+        }
+
+        private static void CreatePaddedIcns(string paddedIconsetPath, string paddedIcnsPath)
+        {
+            var succeeded = RunCommand("iconutil", new[] { "-c", "icns", paddedIconsetPath, "-o", paddedIcnsPath });
+
+            if (!succeeded)
+                throw new InvalidOperationException($"Failed to create padded macOS app icon: {paddedIcnsPath}");
+        }
+
+        private static int GetIconsetImageSize(string path)
+        {
+            var fileName = Path.GetFileNameWithoutExtension(path);
+            var sizePart = fileName.Split('_').FirstOrDefault(part => part.Contains('x', StringComparison.OrdinalIgnoreCase));
+
+            if (string.IsNullOrEmpty(sizePart))
+                return 0;
+
+            var dimensions = sizePart.Split('x');
+
+            if (dimensions.Length == 0 || !int.TryParse(dimensions[0], out var size))
+                return 0;
+
+            return fileName.Contains("@2x", StringComparison.OrdinalIgnoreCase) ? size * 2 : size;
+        }
+
+        private static void WriteIcoFromPngs(string[] pngPaths, string outputPath)
+        {
+            using var output = new BinaryWriter(File.Create(outputPath));
+            output.Write((ushort)0);
+            output.Write((ushort)1);
+            output.Write((ushort)pngPaths.Length);
+
+            var imageOffset = 6 + pngPaths.Length * 16;
+            var pngBytes = pngPaths
+                .Select(File.ReadAllBytes)
+                .ToArray();
+
+            for (var i = 0; i < pngPaths.Length; i++)
+            {
+                var size = GetIconsetImageSize(pngPaths[i]);
+                var icoSize = size >= 256 ? 0 : size;
+
+                output.Write((byte)icoSize);
+                output.Write((byte)icoSize);
+                output.Write((byte)0);
+                output.Write((byte)0);
+                output.Write((ushort)1);
+                output.Write((ushort)32);
+                output.Write(pngBytes[i].Length);
+                output.Write(imageOffset);
+
+                imageOffset += pngBytes[i].Length;
+            }
+
+            foreach (var png in pngBytes)
+                output.Write(png);
         }
 
         private static void ObfuscateClient()
@@ -143,35 +314,59 @@ namespace Quaver.Steam.Deploy
             }
             
             Console.WriteLine("Starting obfuscating client");
-            // Run .NET Reactor for win-x64
-            var contentPath = $"{CompiledBuildPath}\\content-win-x64";
+            var contentPath = Path.Combine(CompiledBuildPath, "content-osx");
+            var quaverDll = Path.Combine(contentPath, "Quaver.dll");
+            var quaverServerClientDll = Path.Combine(contentPath, "Quaver.Server.Client.dll");
 
             var commandline =
-                $"-licensed -file {contentPath}\\Quaver.dll -files {contentPath}\\Quaver.Server.Client.dll -antitamp 1 -anti_debug 1 -hide_calls 1 -hide_calls_internals 1 -control_flow 1 -flow_level 9 -resourceencryption 1 -antistrong 1 -virtualization 1 -necrobit 1 -mapping_file 1";
+                $"-licensed -file {quaverDll} -files {quaverServerClientDll} -antitamp 1 -anti_debug 1 -hide_calls 1 -control_flow 1 -flow_level 9 -mapping_file 1";
 
-            RunCommand(Configuration.NetReactor, commandline);
+            if (!RunCommand(Configuration.NetReactor, commandline))
+                throw new InvalidOperationException("Failed to obfuscate client for osx. See the .NET Reactor output above.");
 
-            var quaverServerClient = $"{contentPath}\\Quaver.Server.Client_Secure\\Quaver.Server.Client.dll";
+            var protectedQuaverServerClientDll =
+                Path.Combine(contentPath, "Quaver.Server.Client_Secure", "Quaver.Server.Client.dll");
 
-            foreach (var platform in Platforms)
+            foreach (var platform in DeployPlatforms)
             {
-                var path = $"{CompiledBuildPath}\\content-{platform}";
-                File.Copy(quaverServerClient, $"{path}\\Quaver.Server.Client.dll", true);
+                var platformContentPath = Path.Combine(CompiledBuildPath, $"content-{platform}");
+                File.Copy(protectedQuaverServerClientDll, Path.Combine(platformContentPath, "Quaver.Server.Client.dll"), true);
+                DeleteFileIfExists(Path.Combine(platformContentPath, "Quaver.Server.Client.pdb"));
             }
+
+            DeleteReactorOutputFolders(contentPath);
             
             Console.WriteLine("Finished obfuscating");
         }
 
+        private static void DeleteReactorOutputFolders(string contentPath)
+        {
+            DeleteDirectoryIfExists(Path.Combine(contentPath, "Quaver_Secure"));
+            DeleteDirectoryIfExists(Path.Combine(contentPath, "Quaver.Server.Client_Secure"));
+        }
+
+        private static void DeleteDirectoryIfExists(string path)
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, true);
+        }
+
+        private static void DeleteFileIfExists(string path)
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+
         private static void HashProject()
         {
-            foreach (var platform in Platforms)
+            foreach (var platform in DeployPlatforms)
             {
                 var gameBuild = new GameBuild
                 {
                     Name = Version,
-                    QuaverSharedMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Shared.dll"),
-                    QuaverApiMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.API.dll"),
-                    QuaverServerClientMd5 = GetHash($"{CompiledBuildPath}\\content-{platform}\\Quaver.Server.Client.dll")
+                    QuaverSharedMd5 = GetHash(Path.Combine(CompiledBuildPath, $"content-{platform}", "Quaver.Shared.dll")),
+                    QuaverApiMd5 = GetHash(Path.Combine(CompiledBuildPath, $"content-{platform}", "Quaver.API.dll")),
+                    QuaverServerClientMd5 = GetHash(Path.Combine(CompiledBuildPath, $"content-{platform}", "Quaver.Server.Client.dll"))
                 };
                 GameBuilds.Add(gameBuild);
             }
@@ -189,10 +384,16 @@ namespace Quaver.Steam.Deploy
         {
             Console.WriteLine("Submitting hashes");
             
+            if(!Configuration.DeployToSteam)
+            {
+                Console.WriteLine("Deploying to Steam is disabled in the config file. Skipping...");
+                return;
+            }
+            
             foreach (var gameBuild in GameBuilds)
             {
                 Console.WriteLine(gameBuild);
-                gameBuild.SendBuild(Configuration.QuaverAPIJWT);
+                gameBuild.SendBuild(Configuration.QuaverApijwt);
             }
         }
 
@@ -205,40 +406,56 @@ namespace Quaver.Steam.Deploy
             }
             
             // Create app_build.vdf
-            var appBuildTemplate = File.ReadAllText($"{CurrentDirectory}\\Scripts\\app_build.template.vdf");
+            var scriptsPath = Path.Combine(CurrentDirectory, "Scripts");
+            var appBuildPath = Path.Combine(scriptsPath, "app_build.vdf");
+            var appBuildTemplate = File.ReadAllText(Path.Combine(scriptsPath, "app_build.template.vdf"));
             var appBuild = appBuildTemplate.Replace("{build_desc}", $"{Version}");
-            File.Create($"{CurrentDirectory}\\Scripts\\app_build.vdf").Dispose();
-            File.WriteAllText($"{CurrentDirectory}\\Scripts\\app_build.vdf", appBuild);
+            File.Create(appBuildPath).Dispose();
+            File.WriteAllText(appBuildPath, appBuild);
             
             Console.Write("Enter Steam Two Factor Authentication Code: ");
             var code = Console.ReadLine();
-            
-            // Delete the reactor folders
-            string contentPath = $"{CompiledBuildPath}\\content-win-x64";
-
-            if (Directory.Exists($"{contentPath}\\Quaver_Secure"))
-            {
-                Directory.Delete($"{contentPath}\\Quaver_Secure", true);
-            }
-
-            if (Directory.Exists($"{contentPath}\\Quaver.Server.Client_Secure"))
-            {
-                Directory.Delete($"{contentPath}\\Quaver.Server.Client_Secure", true);
-            }
-
             Console.WriteLine("Deploying to Steam...");
             
             // Deploy to Steam
-            RunCommand(SteamCMDPath + "\\steamcmd.exe", $"+login {Configuration.SteamUsername} \"{Configuration.SteamPassword}\" {code} +run_app_build_http {CurrentDirectory}/Scripts/app_build.vdf +quit", true);
+            RunCommand(Path.Combine(SteamCmdPath, GetSteamCmdExecutableName()), new[]
+            {
+                "+login",
+                Configuration.SteamUsername,
+                Configuration.SteamPassword,
+                code,
+                "+run_app_build_http",
+                appBuildPath,
+                "+quit"
+            }, true);
 
             Console.WriteLine("Finished deploying!");
+        }
+
+        private static string GetSteamCmdExecutableName()
+        {
+            return RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "steamcmd.exe" : "steamcmd.sh";
+        }
+
+        private static (string Url, string ArchiveName, bool IsZip) GetSteamCmdPackage()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return ("https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip", "steamcmd.zip", true);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return ("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz", "steamcmd_osx.tar.gz", false);
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return ("https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz", "steamcmd_linux.tar.gz", false);
+
+            throw new PlatformNotSupportedException("SteamCMD is only supported on Windows, macOS, and Linux.");
         }
 
         private static bool RunCommand(string command, string args, bool showOutput = true)
         {
             var processStartInfo = new ProcessStartInfo(command, args)
             {
-                WorkingDirectory = Environment.CurrentDirectory,
+                WorkingDirectory = CurrentDirectory,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -246,6 +463,29 @@ namespace Quaver.Steam.Deploy
                 WindowStyle = ProcessWindowStyle.Hidden
             };
 
+            return RunProcess(processStartInfo, showOutput);
+        }
+
+        private static bool RunCommand(string command, IEnumerable<string> args, bool showOutput = true)
+        {
+            var processStartInfo = new ProcessStartInfo(command)
+            {
+                WorkingDirectory = CurrentDirectory,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            foreach (var arg in args)
+                processStartInfo.ArgumentList.Add(arg);
+
+            return RunProcess(processStartInfo, showOutput);
+        }
+
+        private static bool RunProcess(ProcessStartInfo processStartInfo, bool showOutput)
+        {
             var process = Process.Start(processStartInfo);
 
             if (process == null)
@@ -269,17 +509,131 @@ namespace Quaver.Steam.Deploy
 
         private static void RunCommandInNewTerminal(string command)
         {
-            var processStartInfo = new ProcessStartInfo
+            ProcessStartInfo processStartInfo;
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                FileName = "cmd.exe",
-                Arguments = $"/K {command}",
-                UseShellExecute = true,
-                CreateNoWindow = false
-            };
+                processStartInfo = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    WorkingDirectory = CurrentDirectory,
+                    UseShellExecute = true,
+                    CreateNoWindow = false
+                };
+                processStartInfo.ArgumentList.Add("/K");
+                processStartInfo.ArgumentList.Add(command);
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                processStartInfo = new ProcessStartInfo
+                {
+                    FileName = "osascript",
+                    WorkingDirectory = CurrentDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = false
+                };
+                processStartInfo.ArgumentList.Add("-e");
+                processStartInfo.ArgumentList.Add($"tell application \"Terminal\" to do script \"{EscapeAppleScriptString(GetUnixTerminalCommand(command))}\"");
+            }
+            else
+            {
+                processStartInfo = CreateLinuxTerminalStartInfo(command);
+            }
 
             using var process = new Process();
             process.StartInfo = processStartInfo;
             process.Start();
+        }
+
+        private static ProcessStartInfo CreateLinuxTerminalStartInfo(string command)
+        {
+            string[] terminalCommands =
+            {
+                "x-terminal-emulator",
+                "gnome-terminal",
+                "konsole",
+                "xfce4-terminal",
+                "xterm"
+            };
+
+            foreach (var terminalCommand in terminalCommands)
+            {
+                if (!CommandExists(terminalCommand))
+                    continue;
+
+                var processStartInfo = new ProcessStartInfo
+                {
+                    FileName = terminalCommand,
+                    WorkingDirectory = CurrentDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = false
+                };
+
+                var terminalCommandLine = $"{GetUnixTerminalCommand(command)}; exec bash";
+
+                switch (terminalCommand)
+                {
+                    case "gnome-terminal":
+                        processStartInfo.ArgumentList.Add("--");
+                        processStartInfo.ArgumentList.Add("bash");
+                        processStartInfo.ArgumentList.Add("-lc");
+                        processStartInfo.ArgumentList.Add(terminalCommandLine);
+                        break;
+                    case "konsole":
+                    case "xfce4-terminal":
+                        processStartInfo.ArgumentList.Add("-e");
+                        processStartInfo.ArgumentList.Add("bash");
+                        processStartInfo.ArgumentList.Add("-lc");
+                        processStartInfo.ArgumentList.Add(terminalCommandLine);
+                        break;
+                    case "xterm":
+                    case "x-terminal-emulator":
+                        processStartInfo.ArgumentList.Add("-e");
+                        processStartInfo.ArgumentList.Add("bash");
+                        processStartInfo.ArgumentList.Add("-lc");
+                        processStartInfo.ArgumentList.Add(terminalCommandLine);
+                        break;
+                }
+
+                return processStartInfo;
+            }
+
+            throw new PlatformNotSupportedException("Could not find a supported terminal emulator. Install x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, or xterm.");
+        }
+
+        private static bool CommandExists(string command)
+        {
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "which",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            processStartInfo.ArgumentList.Add(command);
+
+            using var process = Process.Start(processStartInfo);
+            if (process == null)
+                return false;
+
+            process.WaitForExit();
+            return process.ExitCode == 0;
+        }
+
+        private static string EscapeAppleScriptString(string value)
+        {
+            return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static string GetUnixTerminalCommand(string command)
+        {
+            return $"cd {QuoteUnixShellArgument(CurrentDirectory)}; {command}";
+        }
+
+        private static string QuoteUnixShellArgument(string value)
+        {
+            return $"'{value.Replace("'", "'\\''")}'";
         }
         
         private static void UpdateProjectVersion(string projectFilePath, string newVersion)
@@ -325,33 +679,59 @@ namespace Quaver.Steam.Deploy
         
         private static void SetupSteamCMD()
         {
-            var steamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
-            var steamCMDName = "steamcmd.zip";
+            var steamCmdPackage = GetSteamCmdPackage();
+            var steamCmdArchivePath = Path.Combine(CurrentDirectory, steamCmdPackage.ArchiveName);
+            var steamCmdExecutable = Path.Combine(SteamCmdPath, GetSteamCmdExecutableName());
 
-            if (!Directory.Exists(SteamCMDPath))
+            if (!File.Exists(steamCmdExecutable))
             {
                 Console.WriteLine("Downloading SteamCMD...");
-                DownloadFile(steamCMDUrl, steamCMDName);
-                ZipFile.ExtractToDirectory($"./{steamCMDName}", SteamCMDPath);
-                
+                DownloadFile(steamCmdPackage.Url, steamCmdArchivePath);
+                Directory.CreateDirectory(SteamCmdPath);
+
+                if (steamCmdPackage.IsZip)
+                    ZipFile.ExtractToDirectory(steamCmdArchivePath, SteamCmdPath, true);
+                else
+                    ExtractTarGzToDirectory(steamCmdArchivePath, SteamCmdPath);
+
+                EnsureSteamCmdIsExecutable(steamCmdExecutable);
+
                 Console.WriteLine("Installing SteamCMD...");
-                RunCommand($"{SteamCMDPath}\\steamcmd.exe", $"+quit", false);
+                RunCommand(steamCmdExecutable, "+quit", false);
             }
 
-            if (File.Exists($"./{steamCMDName}"))
+            EnsureSteamCmdIsExecutable(steamCmdExecutable);
+
+            if (File.Exists(steamCmdArchivePath))
             {
-                File.Delete($"./{steamCMDName}");
+                File.Delete(steamCmdArchivePath);
             }
         }
+
+        private static void EnsureSteamCmdIsExecutable(string steamCMDExecutable)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return;
+
+            var mode = File.GetUnixFileMode(steamCMDExecutable);
+            File.SetUnixFileMode(steamCMDExecutable, mode | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+        }
+
+        private static void ExtractTarGzToDirectory(string archivePath, string destinationDirectory)
+        {
+            using var archiveStream = File.OpenRead(archivePath);
+            using var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress);
+            TarFile.ExtractToDirectory(gzipStream, destinationDirectory, true);
+        }
         
-        static void DownloadFile(string url, string fileName)
+        static void DownloadFile(string url, string filePath)
         {
             using HttpClient client = new HttpClient();
             using HttpResponseMessage response = client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).Result;
             response.EnsureSuccessStatusCode();
 
             using Stream stream = response.Content.ReadAsStream();
-            using FileStream fileStream = new FileStream($"./{fileName}", FileMode.Create, FileAccess.Write, FileShare.None);
+            using FileStream fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
             stream.CopyTo(fileStream);
         }
     }
